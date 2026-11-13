@@ -1,0 +1,172 @@
+---
+title: "DEXseq Analysis GSE173955"
+format: html
+editor: visual
+---
+
+## DEXSeq Analysis - GSE173955
+
+```{r}
+library(DEXSeq) 
+library(tidyverse) 
+library(BiocParallel)
+
+out_dir_GSE173955 <- file.path("results", "DEXSeqGSE173955") dir.create(out_dir_GSE173955, recursive = TRUE, showWarnings = FALSE)
+```
+
+```{r}
+# Assign pre-loaded objects for this dataset
+count_matrix_GSE173955 <- round(as.matrix(isoform_counts_GSE173955))
+
+sample_data_GSE173955 <- data.frame(
+  row.names = colnames(count_matrix_GSE173955),
+  condition = factor(metadata_GSE173955$condition, levels = c("Control", "Treatment"))
+  # Add batch and confounders
+)
+```
+
+```{r}
+# Match transcript-to-gene mapping with count matrix row order
+tx2gene_GSE173955 <- tx2gene_df_GSE173955 |> 
+  dplyr::filter(transcript_id %in% rownames(count_matrix_GSE173955)) |> 
+  dplyr::arrange(match(transcript_id, rownames(count_matrix_GSE173955)))
+```
+
+```{r}
+# Filter out single-isoform genes (cannot test differential usage)
+multi_iso_genes_GSE173955 <- tx2gene_GSE173955 |> 
+  dplyr::count(gene_id) |> 
+  dplyr::filter(n >= 2) |> 
+  dplyr::pull(gene_id)
+
+keep_tx_GSE173955 <- tx2gene_GSE173955$gene_id %in% multi_iso_genes_GSE173955
+count_matrix_GSE173955 <- count_matrix_GSE173955[keep_tx_GSE173955, ]
+tx2gene_GSE173955 <- tx2gene_GSE173955[keep_tx_GSE173955, ]
+
+# Filter out low-count isoforms
+keep_expr_GSE173955 <- rowSums(count_matrix_GSE173955 >= 10) >= 3
+count_matrix_GSE173955 <- count_matrix_GSE173955[keep_expr_GSE173955, ]
+tx2gene_GSE173955 <- tx2gene_GSE173955[keep_expr_GSE173955, ]
+```
+
+```{r}
+# Build DEXSeqDataSet object
+dxd_GSE173955 <- DEXSeqDataSet(
+  countData = count_matrix_GSE173955,
+  sampleData = sample_data_GSE173955,
+  design = ~ sample + exon + condition:exon,
+  featureID = tx2gene_GSE173955$transcript_id,
+  groupID = tx2gene_GSE173955$gene_id
+)
+```
+
+```{r}
+# Normalization, dispersion estimation, and differential usage testing
+dxd_GSE173955 <- estimateSizeFactors(dxd_GSE173955)
+dxd_GSE173955 <- estimateDispersions(dxd_GSE173955, BPPARAM = BPPARAM_GSE173955)
+dxd_GSE173955 <- testForDEU(dxd_GSE173955, BPPARAM = BPPARAM_GSE173955)
+
+# Estimate relative log2 fold changes across conditions
+dxd_GSE173955 <- estimateExonFoldChanges(dxd_GSE173955, fitExpToVar = "condition", BPPARAM = BPPARAM_GSE173955)
+
+# Extract results
+dxr_GSE173955 <- DEXSeqResults(dxd_GSE173955)
+```
+
+```{r}
+# Isoform-level results (all and significant at FDR < 0.05)
+res_isoforms_GSE173955 <- as.data.frame(dxr_GSE173955) |> 
+  tibble::rownames_to_column("gene_isoform") |> 
+  dplyr::arrange(padj)
+
+sig_isoforms_GSE173955 <- res_isoforms_GSE173955 |> 
+  dplyr::filter(!is.na(padj), padj < 0.05)
+
+# Gene-level p-value aggregation (all and significant at FDR < 0.05)
+gene_qvals_GSE173955 <- perGeneQValue(dxr_GSE173955)
+res_genes_GSE173955 <- data.frame(
+  gene_id = names(gene_qvals_GSE173955),
+  gene_padj = gene_qvals_GSE173955
+) |> 
+  dplyr::arrange(gene_padj)
+
+sig_genes_GSE173955 <- res_genes_GSE173955 |> 
+  dplyr::filter(!is.na(gene_padj), gene_padj < 0.05)
+
+# Save result tables and RDS object to results/DEXSeqGSE173955
+readr::write_csv(res_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_isoforms_GSE173955.csv"))
+readr::write_csv(sig_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_isoforms_GSE173955.csv"))
+readr::write_csv(res_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_genes_GSE173955.csv"))
+readr::write_csv(sig_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_genes_GSE173955.csv"))
+saveRDS(dxr_GSE173955, file.path(out_dir_GSE173955, "dxr_GSE173955.rds"))
+```
+
+```{r}
+# Inspect top 10 significant genes
+head(res_genes_GSE173955, 10)
+```
+
+## Graphs and Analysis
+
+```{r}
+# Dispersion estimation plot
+plotDispEsts(dxd_GSE173955, main = "DEXSeq - Dispersion Estimation (GSE173955)")
+```
+
+```{r}
+# MA plot
+plotMA(dxr_GSE173955, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Isoform Usage (GSE173955)")
+```
+
+```{r}
+# Custom Volcano plot
+lfc_col_GSE173955 <- grep("^log2fold_", colnames(res_isoforms_GSE173955), value = TRUE)[1]
+
+volcano_df_GSE173955 <- res_isoforms_GSE173955 |> 
+  dplyr::filter(!is.na(padj), !is.na(.data[[lfc_col_GSE173955]])) |> 
+  dplyr::mutate(
+    sig = dplyr::case_when(
+      padj < 0.05 & .data[[lfc_col_GSE173955]] > 1  ~ "Up (padj < 0.05 & |LFC| > 1)",
+      padj < 0.05 & .data[[lfc_col_GSE173955]] < -1 ~ "Down (padj < 0.05 & |LFC| > 1)",
+      TRUE ~ "Not significant"
+    )
+  )
+
+volcano_plot_GSE173955 <- ggplot(volcano_df_GSE173955, aes(x = .data[[lfc_col_GSE173955]], y = -log10(padj), color = sig)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  scale_color_manual(values = c(
+    "Up (padj < 0.05 & |LFC| > 1)" = "#D55E00",
+    "Down (padj < 0.05 & |LFC| > 1)" = "#0072B2",
+    "Not significant" = "grey75"
+  )) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
+  labs(
+    title = "Differential Isoform Usage - GSE173955",
+    x = paste0("Log2 Fold Change (", lfc_col_GSE173955, ")"),
+    y = "-Log10 Adjusted P-value",
+    color = "State"
+  ) +
+  theme_minimal(base_size = 12)
+
+volcano_plot_GSE173955
+ggsave(file.path(out_dir_GSE173955, "volcano_plot_GSE173955.png"), plot = volcano_plot_GSE173955, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+# Isoform usage profile for the top significant gene
+top_gene_GSE173955 <- res_genes_GSE173955$gene_id[1]
+
+plotDEXSeq(
+  dxr_GSE173955,
+  geneID = top_gene_GSE173955,
+  fitExpToVar = "condition",
+  splicing = TRUE,           # Removes overall gene expression changes to isolate isoform proportions
+  displayTranscripts = TRUE, # Displays transcript structures below the plot
+  names = TRUE,
+  legend = TRUE,
+  cex.axis = 1.1,
+  cex = 1.2,
+  main = paste("Isoform Switching (GSE173955):", top_gene_GSE173955)
+)
+```
