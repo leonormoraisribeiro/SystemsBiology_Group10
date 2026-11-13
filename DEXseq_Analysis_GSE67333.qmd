@@ -7,33 +7,39 @@ editor: visual
 ## DEXSeq Analysis - GSE67333
 
 ```{r}
-library(DEXSeq) 
-library(tidyverse) 
+library(DEXSeq)
+library(tidyverse)
 library(BiocParallel)
 
-out_dir_GSE67333 <- file.path("results", "DEXSeqGSE67333") dir.create(out_dir_GSE67333, recursive = TRUE, showWarnings = FALSE)
+BPPARAM_GSE67333 <- MulticoreParam(workers = 4)
+out_dir_GSE67333 <- file.path("results", "DEXSeqGSE67333")
+dir.create(out_dir_GSE67333, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ```{r}
-# Assign pre-loaded objects for this dataset
+# prepare count matrix and sample metadata
 count_matrix_GSE67333 <- round(as.matrix(isoform_counts_GSE67333))
 
 sample_data_GSE67333 <- data.frame(
   row.names = colnames(count_matrix_GSE67333),
-  condition = factor(metadata_GSE67333$condition, levels = c("Control", "Treatment"))
-  # Add batch and confounders
+  sample = colnames(count_matrix_GSE67333),
+  condition = metadata_GSE67333$condition
+  # Add confounders here if available
 )
+
+# Convert design variables explicitly to factors 
+factor_cols_GSE67333 <- intersect(c("sample", "condition", "sex", "batch"), colnames(sample_data_GSE67333))
+sample_data_GSE67333[factor_cols_GSE67333] <- lapply(sample_data_GSE67333[factor_cols_GSE67333], factor)
+sample_data_GSE67333$condition <- relevel(sample_data_GSE67333$condition, ref = "Control")
 ```
 
 ```{r}
-# Match transcript-to-gene mapping with count matrix row order
+# align transcript-to-gene annotation and filter features
 tx2gene_GSE67333 <- tx2gene_df_GSE67333 |> 
   dplyr::filter(transcript_id %in% rownames(count_matrix_GSE67333)) |> 
   dplyr::arrange(match(transcript_id, rownames(count_matrix_GSE67333)))
-```
 
-```{r}
-# Filter out single-isoform genes (cannot test differential usage)
+# Keep only multi-isoform genes
 multi_iso_genes_GSE67333 <- tx2gene_GSE67333 |> 
   dplyr::count(gene_id) |> 
   dplyr::filter(n >= 2) |> 
@@ -43,14 +49,14 @@ keep_tx_GSE67333 <- tx2gene_GSE67333$gene_id %in% multi_iso_genes_GSE67333
 count_matrix_GSE67333 <- count_matrix_GSE67333[keep_tx_GSE67333, ]
 tx2gene_GSE67333 <- tx2gene_GSE67333[keep_tx_GSE67333, ]
 
-# Filter out low-count isoforms
+# Filter low-count isoforms
 keep_expr_GSE67333 <- rowSums(count_matrix_GSE67333 >= 10) >= 3
 count_matrix_GSE67333 <- count_matrix_GSE67333[keep_expr_GSE67333, ]
 tx2gene_GSE67333 <- tx2gene_GSE67333[keep_expr_GSE67333, ]
 ```
 
 ```{r}
-# Build DEXSeqDataSet object
+# build object
 dxd_GSE67333 <- DEXSeqDataSet(
   countData = count_matrix_GSE67333,
   sampleData = sample_data_GSE67333,
@@ -61,39 +67,67 @@ dxd_GSE67333 <- DEXSeqDataSet(
 ```
 
 ```{r}
-# Normalization, dispersion estimation, and differential usage testing
+# run DEXSeq pipeline
 dxd_GSE67333 <- estimateSizeFactors(dxd_GSE67333)
 dxd_GSE67333 <- estimateDispersions(dxd_GSE67333, BPPARAM = BPPARAM_GSE67333)
-dxd_GSE67333 <- testForDEU(dxd_GSE67333, BPPARAM = BPPARAM_GSE67333)
 
-# Estimate relative log2 fold changes across conditions
+# Note: If confounders are added to design, specify both fullModel and reducedModel here:
+# fullModel = ~ sample + exon + condition:exon + sex:exon,
+# reducedModel = ~ sample + exon + sex:exon
+# according to the exercise in the class
+
+dxd_GSE67333 <- testForDEU(
+  dxd_GSE67333,
+  fullModel = ~ sample + exon + condition:exon,
+  reducedModel = ~ sample + exon,
+  BPPARAM = BPPARAM_GSE67333
+)
+
 dxd_GSE67333 <- estimateExonFoldChanges(dxd_GSE67333, fitExpToVar = "condition", BPPARAM = BPPARAM_GSE67333)
-
-# Extract results
 dxr_GSE67333 <- DEXSeqResults(dxd_GSE67333)
 ```
 
 ```{r}
-# Isoform-level results (all and significant at FDR < 0.05)
+# extract isoform-level and collapsed gene-level results
+alpha_GSE67333 <- 0.05
+
+# Isoform-level table
 res_isoforms_GSE67333 <- as.data.frame(dxr_GSE67333) |> 
-  tibble::rownames_to_column("gene_isoform") |> 
+  tibble::as_tibble() |> 
   dplyr::arrange(padj)
 
 sig_isoforms_GSE67333 <- res_isoforms_GSE67333 |> 
-  dplyr::filter(!is.na(padj), padj < 0.05)
+  dplyr::filter(!is.na(padj), padj < alpha_GSE67333)
 
-# Gene-level p-value aggregation (all and significant at FDR < 0.05)
-gene_qvals_GSE67333 <- perGeneQValue(dxr_GSE67333)
-res_genes_GSE67333 <- data.frame(
-  gene_id = names(gene_qvals_GSE67333),
-  gene_padj = gene_qvals_GSE67333
-) |> 
-  dplyr::arrange(gene_padj)
+# Automatically detect log2fold column name
+lfc_col_GSE67333 <- grep("^log2fold_", colnames(res_isoforms_GSE67333), value = TRUE)[1]
+
+# Collapse to gene-level keeping the most significant isoform per gene (preserves stat & log2FC for fgsea)
+res_genes_GSE67333 <- res_isoforms_GSE67333 |> 
+  dplyr::filter(!is.na(stat)) |> 
+  dplyr::select(
+    gene_id = groupID,
+    isoform_id = featureID,
+    stat,
+    log2FC = dplyr::all_of(lfc_col_GSE67333),
+    pvalue,
+    padj
+  ) |> 
+  dplyr::group_by(gene_id) |> 
+  dplyr::slice_min(order_by = pvalue, n = 1, with_ties = FALSE) |> 
+  dplyr::ungroup() |> 
+  dplyr::mutate(padj = p.adjust(pvalue, method = "fdr")) |> 
+  dplyr::arrange(padj)
 
 sig_genes_GSE67333 <- res_genes_GSE67333 |> 
-  dplyr::filter(!is.na(gene_padj), gene_padj < 0.05)
+  dplyr::filter(!is.na(padj), padj < alpha_GSE67333)
 
-# Save result tables and RDS object to results/DEXSeqGSE67333
+# Summary counts
+cat("Significant isoforms (FDR < 0.05):", nrow(sig_isoforms_GSE67333), "\n")
+cat("Unique genes from significant isoforms:", length(unique(sig_isoforms_GSE67333$groupID)), "\n")
+cat("Significant genes after gene-level FDR:", nrow(sig_genes_GSE67333), "\n")
+
+# Save results to results/DEXSeqGSE67333
 readr::write_csv(res_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_isoforms_GSE67333.csv"))
 readr::write_csv(sig_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_isoforms_GSE67333.csv"))
 readr::write_csv(res_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_genes_GSE67333.csv"))
@@ -109,19 +143,17 @@ head(res_genes_GSE67333, 10)
 ## Graphs and Analysis
 
 ```{r}
-# Dispersion estimation plot
+# 1. Dispersion estimation plot
 plotDispEsts(dxd_GSE67333, main = "DEXSeq - Dispersion Estimation (GSE67333)")
 ```
 
 ```{r}
-# MA plot
+# 2. MA plot
 plotMA(dxr_GSE67333, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Isoform Usage (GSE67333)")
 ```
 
 ```{r}
-# Custom Volcano plot
-lfc_col_GSE67333 <- grep("^log2fold_", colnames(res_isoforms_GSE67333), value = TRUE)[1]
-
+# 3. Volcano plot
 volcano_df_GSE67333 <- res_isoforms_GSE67333 |> 
   dplyr::filter(!is.na(padj), !is.na(.data[[lfc_col_GSE67333]])) |> 
   dplyr::mutate(
@@ -154,15 +186,45 @@ ggsave(file.path(out_dir_GSE67333, "volcano_plot_GSE67333.png"), plot = volcano_
 ```
 
 ```{r}
-# Isoform usage profile for the top significant gene
+# 4. Per-gene fraction of significant isoforms histogram (Optional challenge #3 in exercise)
+per_gene_frac_GSE67333 <- res_isoforms_GSE67333 |> 
+  dplyr::transmute(
+    gene_id = groupID,
+    isoform_id = featureID,
+    sig = !is.na(padj) & padj < alpha_GSE67333
+  ) |> 
+  dplyr::group_by(gene_id) |> 
+  dplyr::summarise(
+    n_iso = dplyr::n(),
+    n_sig = sum(sig),
+    frac_sig = n_sig / n_iso
+  ) |> 
+  dplyr::ungroup() |> 
+  dplyr::filter(frac_sig > 0)
+
+frac_plot_GSE67333 <- ggplot(per_gene_frac_GSE67333, aes(x = frac_sig)) +
+  geom_histogram(bins = 30, fill = "#009E73", color = "white") +
+  labs(
+    title = "DEXSeq: Per-Gene Fraction of Significant Isoforms (GSE67333)",
+    x = "Fraction of significant isoforms per gene",
+    y = "Number of genes"
+  ) +
+  theme_minimal(base_size = 12)
+
+frac_plot_GSE67333
+ggsave(file.path(out_dir_GSE67333, "per_gene_isoform_fraction_GSE67333.png"), plot = frac_plot_GSE67333, width = 8, height = 5, dpi = 300)
+```
+
+```{r}
+# 5. Isoform switching profile for the top significant gene
 top_gene_GSE67333 <- res_genes_GSE67333$gene_id[1]
 
 plotDEXSeq(
   dxr_GSE67333,
   geneID = top_gene_GSE67333,
   fitExpToVar = "condition",
-  splicing = TRUE,           # Removes overall gene expression changes to isolate isoform proportions
-  displayTranscripts = TRUE, # Displays transcript structures below the plot
+  splicing = TRUE,
+  displayTranscripts = TRUE,
   names = TRUE,
   legend = TRUE,
   cex.axis = 1.1,
