@@ -9,3 +9,20 @@ editor: visual
 ```{r}
 load(file='/home/projects/22140/exam_data/exam_functions.Rdata')
 ```
+
+```{r}
+isoform_counts_GSE173955 <- loadIsoformCountMatrix("GSE173955")
+```
+
+```{r}
+gene_counts_GSE173955 <- extractGeneCountMatrixFromIsoCounts(
+  isoform_counts_GSE173955
+)
+```
+
+```{r}
+saveRDS(
+  gene_counts_GSE173955,
+  "data/processed/GSE173955/gene_counts.rds"
+)
+```
