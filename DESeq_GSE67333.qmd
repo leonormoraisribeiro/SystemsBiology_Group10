@@ -1,0 +1,186 @@
+---
+title: "DESeq_GSE67333"
+format: html
+---
+
+## DESeq GSE67333
+
+Loading Libraries and Data
+
+```{r}
+# Loading libraries
+library(tidyverse)
+library(DESeq2)
+
+# Loading data
+load(file='/home/projects/22140/exam_data/exam_functions.Rdata')
+
+isoform_counts_GSE67333 <- loadIsoformCountMatrix("GSE67333")
+
+gene_counts_GSE67333 <- extractGeneCountMatrixFromIsoCounts(isoform_counts_GSE67333)
+```
+
+Separating Metadata
+
+```{r}
+# Extracting sample ID
+sample_metadata_GSE67333 <- data.frame(
+  Sample = colnames(gene_counts_GSE67333)
+)
+
+# Making a new Condition column (Alzheimer or Control)
+sample_metadata_GSE67333 <- sample_metadata_GSE67333 |>
+  mutate(Condition = case_when(
+    as.numeric(sub("GSM", "", Sample)) <= 1644999 ~ "Alzheimer",
+    as.numeric(sub("GSM", "", Sample)) > 1644999 ~ "Control"
+  ))
+
+# Converting Condition into a factor
+sample_metadata_GSE67333$Condition <- factor(
+  sample_metadata_GSE67333$Condition,
+  levels = c("Control", "Alzheimer")
+)
+
+# Naming the rows according to sample ID
+rownames(sample_metadata_GSE67333) <- sample_metadata_GSE67333$Sample
+```
+
+Running DESeq
+
+```{r}
+# Creating DESeq dataset
+dds_GSE67333 <- DESeqDataSetFromMatrix(
+  countData = gene_counts_GSE67333,
+  colData = sample_metadata_GSE67333,
+  design = ~ Condition
+)
+
+# Running differential expression analysis
+dds_GSE67333 <- DESeq(dds_GSE67333)
+
+# Extracting Alzheimer vs Control results
+res_GSE67333 <- results(
+  dds_GSE67333,
+  contrast = c("Condition", "Alzheimer", "Control"),
+  alpha = 0.05
+)
+
+# Counting significant genes
+n_sig_GSE67333 <- sum(
+  res_GSE67333$padj < 0.05,
+  na.rm = TRUE
+)
+
+# Counting upregulated genes
+n_up_GSE67333 <- sum(
+  res_GSE67333$padj < 0.05 &
+  res_GSE67333$log2FoldChange > 0,
+  na.rm = TRUE
+)
+
+# Counting downregulated genes
+n_down_GSE67333 <- sum(
+  res_GSE67333$padj < 0.05 &
+  res_GSE67333$log2FoldChange < 0,
+  na.rm = TRUE
+)
+
+# Displaying summary of results
+cat(
+  summary(res_GSE67333, alpha = 0.05),
+  "\nNumber of Significant Genes:", n_sig_GSE67333,
+  "\nNumber of Upregulated Genes:", n_up_GSE67333,
+  "\nNumber of Downregulated Genes:", n_down_GSE67333,
+  "\n"
+)
+```
+
+Saving Results
+
+```{r}
+# Creating folder for results
+out_dir_GSE67333 <- file.path("results", "DESeq2GSE67333")
+
+dir.create(
+  out_dir_GSE67333,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# Converting results into a data frame
+res_df_GSE67333 <- as.data.frame(res_GSE67333)
+
+res_df_GSE67333$gene_id <- rownames(res_df_GSE67333)
+
+# Saving all results
+write.csv(
+  res_df_GSE67333,
+  file.path(out_dir_GSE67333, "DESeq2_all_genes.csv"),
+  row.names = FALSE
+)
+
+# Filtering and saving significant genes
+sig_genes_GSE67333 <- res_df_GSE67333 |>
+  filter(!is.na(padj), padj < 0.05)
+
+write.csv(
+  sig_genes_GSE67333,
+  file.path(out_dir_GSE67333, "DESeq2_significant_genes.csv"),
+  row.names = FALSE
+)
+```
+
+Dispersion Estimation Plot
+
+```{r}
+# Plotting dispersion estimates
+plotDispEsts(dds_GSE67333)
+```
+
+MA Plot
+
+```{r}
+# Plotting mean expression against log2 fold change
+# Plotting mean expression against log2 fold change
+plotMA(
+  res_GSE67333,
+  alpha = 0.05,
+  main = "GSE67333 - Alzheimer vs Control"
+)
+```
+
+Volcano Plot
+
+```{r}
+# Classifying genes by significance and fold change
+volcano_GSE67333 <- as.data.frame(res_GSE67333) |>
+  mutate(
+    Regulation = case_when(
+      padj < 0.05 & log2FoldChange > 1 ~ "Upregulated",
+      padj < 0.05 & log2FoldChange < -1 ~ "Downregulated",
+      TRUE ~ "Not highlighted"
+    )
+  )
+
+# Volcano Plot
+ggplot(
+  volcano_GSE67333,
+  aes(x = log2FoldChange, y = -log10(padj),
+      color = Regulation)
+) +
+  geom_point(alpha = 0.5, size = 1, na.rm = TRUE) +
+  scale_color_manual(
+    values = c(
+      "Upregulated" = "forestgreen",
+      "Downregulated" = "orange",
+      "Not highlighted" = "grey"
+    )
+  ) +
+  labs(
+    title = "GSE67333 - Alzheimer vs Control",
+    x = "log2 Fold Change",
+    y = "-log10 Adjusted P-value"
+  ) +
+  coord_cartesian(xlim = c(-6, 6), ylim = c(0, 7)) +
+  theme_minimal()
+```
