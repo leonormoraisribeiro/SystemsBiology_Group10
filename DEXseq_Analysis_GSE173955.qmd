@@ -17,29 +17,49 @@ dir.create(out_dir_GSE173955, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ```{r}
-# prepare count matrix and sample metadata
-count_matrix_GSE173955 <- round(as.matrix(isoform_counts_GSE173955))
+load(file = "/home/projects/22140/exam_data/exam_functions.Rdata")
 
-sample_data_GSE173955 <- data.frame(
-  row.names = colnames(count_matrix_GSE173955),
-  sample = colnames(count_matrix_GSE173955),
-  condition = metadata_GSE173955$condition
-  # Add confounders here if available
-)
+if (file.exists("data/processed/GSE173955/isoform_counts.rds")) {
+  isoform_counts_GSE173955 <- readRDS("data/processed/GSE173955/isoform_counts.rds")
+} else {
+  isoform_counts_GSE173955 <- loadIsoformCountMatrix("GSE173955")
+}
 
-# Convert design variables explicitly to factors 
-factor_cols_GSE173955 <- intersect(c("sample", "condition", "sex", "batch"), colnames(sample_data_GSE173955))
-sample_data_GSE173955[factor_cols_GSE173955] <- lapply(sample_data_GSE173955[factor_cols_GSE173955], factor)
-sample_data_GSE173955$condition <- relevel(sample_data_GSE173955$condition, ref = "Control")
+metadata_GSE173955 <- readr::read_csv("data/metadata/GSE173955_metadata_clean.csv", show_col_types = FALSE)
+
+tx2gene_df_GSE173955 <- readr::read_rds(
+  "/home/projects/22140/exam_data/Homo_sapiens.GRCh38.107.chr_patch_hapl_scaff_tx_info.Rds"
+) |> 
+  dplyr::select(transcript_id, gene_id) |> 
+  dplyr::distinct(transcript_id, .keep_all = TRUE)
 ```
 
 ```{r}
-# align transcript-to-gene annotation and filter features
+# prepare integer count matrix and align sample metadata
+count_matrix_GSE173955 <- round(as.matrix(isoform_counts_GSE173955))
+
+# align metadata rows to match count matrix column order
+stopifnot(all(colnames(count_matrix_GSE173955) %in% metadata_GSE173955$sample_id))
+metadata_GSE173955 <- metadata_GSE173955[match(colnames(count_matrix_GSE173955), metadata_GSE173955$sample_id), ]
+
+sample_data_GSE173955 <- data.frame(
+  row.names = metadata_GSE173955$sample_id,
+  sample = factor(metadata_GSE173955$sample_id),
+  condition = factor(metadata_GSE173955$condition, levels = c("Control", "AD")),
+  sex = factor(tolower(metadata_GSE173955$sex)),
+  age_scaled = as.numeric(scale(metadata_GSE173955$age))
+)
+```
+
+```{r}
+# align transcript-to-gene annotation 1-to-1 and filter features
 tx2gene_GSE173955 <- tx2gene_df_GSE173955 |> 
   dplyr::filter(transcript_id %in% rownames(count_matrix_GSE173955)) |> 
   dplyr::arrange(match(transcript_id, rownames(count_matrix_GSE173955)))
 
-# Keep only multi-isoform genes
+count_matrix_GSE173955 <- count_matrix_GSE173955[tx2gene_GSE173955$transcript_id, ]
+
+# keep only multi-isoform genes
 multi_iso_genes_GSE173955 <- tx2gene_GSE173955 |> 
   dplyr::count(gene_id) |> 
   dplyr::filter(n >= 2) |> 
@@ -49,18 +69,18 @@ keep_tx_GSE173955 <- tx2gene_GSE173955$gene_id %in% multi_iso_genes_GSE173955
 count_matrix_GSE173955 <- count_matrix_GSE173955[keep_tx_GSE173955, ]
 tx2gene_GSE173955 <- tx2gene_GSE173955[keep_tx_GSE173955, ]
 
-# Filter low-count isoforms
+# filter low-count isoforms
 keep_expr_GSE173955 <- rowSums(count_matrix_GSE173955 >= 10) >= 3
 count_matrix_GSE173955 <- count_matrix_GSE173955[keep_expr_GSE173955, ]
 tx2gene_GSE173955 <- tx2gene_GSE173955[keep_expr_GSE173955, ]
 ```
 
 ```{r}
-# build object
+# build DEXSeqDataSet object including sex and age confounders
 dxd_GSE173955 <- DEXSeqDataSet(
   countData = count_matrix_GSE173955,
   sampleData = sample_data_GSE173955,
-  design = ~ sample + exon + condition:exon,
+  design = ~ sample + exon + sex:exon + age_scaled:exon + condition:exon,
   featureID = tx2gene_GSE173955$transcript_id,
   groupID = tx2gene_GSE173955$gene_id
 )
@@ -71,15 +91,10 @@ dxd_GSE173955 <- DEXSeqDataSet(
 dxd_GSE173955 <- estimateSizeFactors(dxd_GSE173955)
 dxd_GSE173955 <- estimateDispersions(dxd_GSE173955, BPPARAM = BPPARAM_GSE173955)
 
-# Note: If confounders are added to design, specify both fullModel and reducedModel here:
-# fullModel = ~ sample + exon + condition:exon + sex:exon,
-# reducedModel = ~ sample + exon + sex:exon
-# according to the exercise in the class
-
 dxd_GSE173955 <- testForDEU(
   dxd_GSE173955,
-  fullModel = ~ sample + exon + condition:exon,
-  reducedModel = ~ sample + exon,
+  fullModel = ~ sample + exon + sex:exon + age_scaled:exon + condition:exon,
+  reducedModel = ~ sample + exon + sex:exon + age_scaled:exon,
   BPPARAM = BPPARAM_GSE173955
 )
 
@@ -91,7 +106,6 @@ dxr_GSE173955 <- DEXSeqResults(dxd_GSE173955)
 # extract isoform-level and collapsed gene-level results
 alpha_GSE173955 <- 0.05
 
-# Isoform-level table
 res_isoforms_GSE173955 <- as.data.frame(dxr_GSE173955) |> 
   tibble::as_tibble() |> 
   dplyr::arrange(padj)
@@ -99,10 +113,9 @@ res_isoforms_GSE173955 <- as.data.frame(dxr_GSE173955) |>
 sig_isoforms_GSE173955 <- res_isoforms_GSE173955 |> 
   dplyr::filter(!is.na(padj), padj < alpha_GSE173955)
 
-# Automatically detect log2fold column name
 lfc_col_GSE173955 <- grep("^log2fold_", colnames(res_isoforms_GSE173955), value = TRUE)[1]
 
-# Collapse to gene-level keeping the most significant isoform per gene (preserves stat & log2FC for fgsea)
+# collapse to gene-level keeping the most significant isoform per gene (preserves stat & log2FC for fgsea)
 res_genes_GSE173955 <- res_isoforms_GSE173955 |> 
   dplyr::filter(!is.na(stat)) |> 
   dplyr::select(
@@ -122,12 +135,12 @@ res_genes_GSE173955 <- res_isoforms_GSE173955 |>
 sig_genes_GSE173955 <- res_genes_GSE173955 |> 
   dplyr::filter(!is.na(padj), padj < alpha_GSE173955)
 
-# Summary counts
+# summary
 cat("Significant isoforms (FDR < 0.05):", nrow(sig_isoforms_GSE173955), "\n")
 cat("Unique genes from significant isoforms:", length(unique(sig_isoforms_GSE173955$groupID)), "\n")
 cat("Significant genes after gene-level FDR:", nrow(sig_genes_GSE173955), "\n")
 
-# Save results to results/DEXSeqGSE173955
+# save results to results/DEXSeqGSE173955
 readr::write_csv(res_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_isoforms_GSE173955.csv"))
 readr::write_csv(sig_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_isoforms_GSE173955.csv"))
 readr::write_csv(res_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_genes_GSE173955.csv"))
@@ -213,22 +226,4 @@ frac_plot_GSE173955 <- ggplot(per_gene_frac_GSE173955, aes(x = frac_sig)) +
 
 frac_plot_GSE173955
 ggsave(file.path(out_dir_GSE173955, "per_gene_isoform_fraction_GSE173955.png"), plot = frac_plot_GSE173955, width = 8, height = 5, dpi = 300)
-```
-
-```{r}
-# 5. Isoform switching profile for the top significant gene
-top_gene_GSE173955 <- res_genes_GSE173955$gene_id[1]
-
-plotDEXSeq(
-  dxr_GSE173955,
-  geneID = top_gene_GSE173955,
-  fitExpToVar = "condition",
-  splicing = TRUE,
-  displayTranscripts = TRUE,
-  names = TRUE,
-  legend = TRUE,
-  cex.axis = 1.1,
-  cex = 1.2,
-  main = paste("Isoform Switching (GSE173955):", top_gene_GSE173955)
-)
 ```

@@ -4,7 +4,20 @@ format: html
 editor: visual
 ---
 
+## Data Exploration
+
 ## Analysis GSE173955
+
+Load Library
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(DEXSeq)
+library(BiocParallel)
+library(fgsea)
+library(msigdbr)
+```
 
 ```{r}
 load(file='/home/projects/22140/exam_data/exam_functions.Rdata')
@@ -25,4 +38,110 @@ saveRDS(
   gene_counts_GSE173955,
   "data/processed/GSE173955/gene_counts.rds"
 )
+```
+
+```{r}
+dir.create("data/processed/GSE173955", recursive = TRUE, showWarnings = FALSE)
+
+metadata_GSE173955 <- readr::read_csv("data/metadata/GSE173955_metadata_clean.csv", show_col_types = FALSE) |> 
+  dplyr::mutate(
+    condition = factor(condition, levels = c("Control", "AD")),
+    sex = factor(tolower(sex)),
+    age_scaled = as.numeric(scale(age))
+  )
+
+stopifnot(all(metadata_GSE173955$sample_id %in% colnames(gene_counts_GSE173955)))
+stopifnot(all(metadata_GSE173955$sample_id %in% colnames(isoform_counts_GSE173955)))
+
+gene_counts_GSE173955 <- gene_counts_GSE173955[, metadata_GSE173955$sample_id]
+isoform_counts_GSE173955 <- isoform_counts_GSE173955[, metadata_GSE173955$sample_id]
+
+saveRDS(isoform_counts_GSE173955, "data/processed/GSE173955/isoform_counts.rds")
+saveRDS(metadata_GSE173955, "data/processed/GSE173955/metadata_aligned.rds")
+```
+
+```{r}
+# load the exact transcript-to-gene annotation used by the function
+tx2gene_df_GSE173955 <- readr::read_rds(
+  "/home/projects/22140/exam_data/Homo_sapiens.GRCh38.107.chr_patch_hapl_scaff_tx_info.Rds"
+) |> 
+  dplyr::select(transcript_id, gene_id) |> 
+  dplyr::distinct()
+```
+
+```{r}
+# build transcript-to-gene mapping table for DEXSeq
+if (grepl("\\|", rownames(isoform_counts_GSE173955)[1])) {
+  tx2gene_df_GSE173955 <- tibble::tibble(raw_id = rownames(isoform_counts_GSE173955)) |> 
+    tidyr::separate(raw_id, into = c("col1", "col2"), sep = "\\|", remove = FALSE, extra = "drop") |> 
+    dplyr::mutate(
+      transcript_id = dplyr::if_else(grepl("^ENST", col1), col1, col2),
+      gene_id = dplyr::if_else(grepl("^ENSG", col1), col1, col2)
+    ) |> 
+    dplyr::select(transcript_id, gene_id)
+  
+  rownames(isoform_counts_GSE173955) <- tx2gene_df_GSE173955$transcript_id
+} else {
+  loaded_objs_GSE173955 <- mget(ls(), envir = .GlobalEnv)
+  annot_candidates_GSE173955 <- Filter(
+    function(x) is.data.frame(x) && all(c("transcript_id", "gene_id") %in% colnames(x)),
+    loaded_objs_GSE173955
+  )
+  
+  if (length(annot_candidates_GSE173955) > 0) {
+    tx2gene_df_GSE173955 <- annot_candidates_GSE173955[[1]] |> 
+      dplyr::select(transcript_id, gene_id) |> 
+      dplyr::distinct()
+  }
+}
+```
+
+```{r}
+dds_qc_GSE173955 <- DESeqDataSetFromMatrix(
+  countData = round(as.matrix(gene_counts_GSE173955)),
+  colData = as.data.frame(metadata_GSE173955),
+  design = ~ sex + age_scaled + condition
+)
+
+keep_genes_qc_GSE173955 <- rowSums(counts(dds_qc_GSE173955) >= 10) >= 3
+dds_qc_GSE173955 <- dds_qc_GSE173955[keep_genes_qc_GSE173955, ]
+
+vsd_GSE173955 <- vst(dds_qc_GSE173955, blind = TRUE)
+pca_data_GSE173955 <- plotPCA(vsd_GSE173955, intgroup = c("condition", "sex", "age"), returnData = TRUE)
+percentVar_GSE173955 <- round(100 * attr(pca_data_GSE173955, "percentVar"))
+
+ggplot(pca_data_GSE173955, aes(x = PC1, y = PC2, color = condition, shape = sex)) +
+  geom_point(size = 3.5, alpha = 0.85) +
+  labs(
+    title = "PCA - GSE173955",
+    x = paste0("PC1: ", percentVar_GSE173955[1], "% variance"),
+    y = paste0("PC2: ", percentVar_GSE173955[2], "% variance")
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+ggplot(pca_data_GSE173955, aes(x = PC1, y = PC2, color = age, shape = condition)) +
+  geom_point(size = 3.5, alpha = 0.9) +
+  scale_color_viridis_c() +
+  labs(
+    title = "PCA - GSE173955 colored by Age",
+    x = paste0("PC1: ", percentVar_GSE173955[1], "% variance"),
+    y = paste0("PC2: ", percentVar_GSE173955[2], "% variance")
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+vsd_corrected_GSE173955 <- vsd_GSE173955
+assay(vsd_corrected_GSE173955) <- limma::removeBatchEffect(
+  assay(vsd_GSE173955),
+  batch = metadata_GSE173955$sex,
+  covariates = metadata_GSE173955$age_scaled,
+  design = model.matrix(~ condition, data = metadata_GSE173955)
+)
+
+plotPCA(vsd_corrected_GSE173955, intgroup = "condition") +
+  ggtitle("PCA - GSE173955 with age and sex correction") +
+  theme_minimal(base_size = 12)
 ```
