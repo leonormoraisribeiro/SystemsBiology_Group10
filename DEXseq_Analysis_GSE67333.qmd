@@ -17,29 +17,54 @@ dir.create(out_dir_GSE67333, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ```{r}
-# prepare count matrix and sample metadata
-count_matrix_GSE67333 <- round(as.matrix(isoform_counts_GSE67333))
+load(file = "/home/projects/22140/exam_data/exam_functions.Rdata")
 
-sample_data_GSE67333 <- data.frame(
-  row.names = colnames(count_matrix_GSE67333),
-  sample = colnames(count_matrix_GSE67333),
-  condition = metadata_GSE67333$condition
-  # Add confounders here if available
-)
+if (file.exists("data/processed/GSE67333/isoform_counts.rds")) {
+  isoform_counts_GSE67333 <- readRDS("data/processed/GSE67333/isoform_counts.rds")
+} else {
+  isoform_counts_GSE67333 <- loadIsoformCountMatrix("GSE67333")
+}
 
-# Convert design variables explicitly to factors 
-factor_cols_GSE67333 <- intersect(c("sample", "condition", "sex", "batch"), colnames(sample_data_GSE67333))
-sample_data_GSE67333[factor_cols_GSE67333] <- lapply(sample_data_GSE67333[factor_cols_GSE67333], factor)
-sample_data_GSE67333$condition <- relevel(sample_data_GSE67333$condition, ref = "Control")
+metadata_GSE67333 <- readr::read_csv("data/metadata/GSE67333_metadata_clean.csv", show_col_types = FALSE)
+
+tx2gene_df_GSE67333 <- readr::read_rds(
+  "/home/projects/22140/exam_data/Homo_sapiens.GRCh38.107.chr_patch_hapl_scaff_tx_info.Rds"
+) |> 
+  dplyr::select(transcript_id, gene_id) |> 
+  dplyr::distinct(transcript_id, .keep_all = TRUE)
 ```
 
 ```{r}
-# align transcript-to-gene annotation and filter features
+# prepare integer count matrix and align sample metadata
+count_matrix_GSE67333 <- round(as.matrix(isoform_counts_GSE67333))
+
+# align metadata rows to match count matrix column order
+stopifnot(all(colnames(count_matrix_GSE67333) %in% metadata_GSE67333$sample_id))
+metadata_GSE67333 <- metadata_GSE67333[match(colnames(count_matrix_GSE67333), metadata_GSE67333$sample_id), ]
+
+sample_data_GSE67333 <- data.frame(
+  row.names = metadata_GSE67333$sample_id,
+  sample = factor(metadata_GSE67333$sample_id),
+  condition = factor(metadata_GSE67333$condition, levels = c("Control", "AD")),
+  sex = factor(tolower(metadata_GSE67333$sex)),
+  age_scaled = as.numeric(scale(metadata_GSE67333$age))
+)
+```
+
+```{r}
+# align transcript-to-gene annotation 1-to-1 and filter features
 tx2gene_GSE67333 <- tx2gene_df_GSE67333 |> 
   dplyr::filter(transcript_id %in% rownames(count_matrix_GSE67333)) |> 
   dplyr::arrange(match(transcript_id, rownames(count_matrix_GSE67333)))
 
-# Keep only multi-isoform genes
+count_matrix_GSE67333 <- count_matrix_GSE67333[tx2gene_GSE67333$transcript_id, ]
+
+# filter low-count isoforms first (>= 10 counts in at least 4 of the 8 samples)
+keep_expr_GSE67333 <- rowSums(count_matrix_GSE67333 >= 10) >= 4
+count_matrix_GSE67333 <- count_matrix_GSE67333[keep_expr_GSE67333, ]
+tx2gene_GSE67333 <- tx2gene_GSE67333[keep_expr_GSE67333, ]
+
+# keep only genes that still have >= 2 expressed isoforms
 multi_iso_genes_GSE67333 <- tx2gene_GSE67333 |> 
   dplyr::count(gene_id) |> 
   dplyr::filter(n >= 2) |> 
@@ -48,19 +73,14 @@ multi_iso_genes_GSE67333 <- tx2gene_GSE67333 |>
 keep_tx_GSE67333 <- tx2gene_GSE67333$gene_id %in% multi_iso_genes_GSE67333
 count_matrix_GSE67333 <- count_matrix_GSE67333[keep_tx_GSE67333, ]
 tx2gene_GSE67333 <- tx2gene_GSE67333[keep_tx_GSE67333, ]
-
-# Filter low-count isoforms
-keep_expr_GSE67333 <- rowSums(count_matrix_GSE67333 >= 10) >= 3
-count_matrix_GSE67333 <- count_matrix_GSE67333[keep_expr_GSE67333, ]
-tx2gene_GSE67333 <- tx2gene_GSE67333[keep_expr_GSE67333, ]
 ```
 
 ```{r}
-# build object
+# build DEXSeqDataSet object including sex and age confounders
 dxd_GSE67333 <- DEXSeqDataSet(
   countData = count_matrix_GSE67333,
   sampleData = sample_data_GSE67333,
-  design = ~ sample + exon + condition:exon,
+  design = ~ sample + exon + sex:exon + age_scaled:exon + condition:exon,
   featureID = tx2gene_GSE67333$transcript_id,
   groupID = tx2gene_GSE67333$gene_id
 )
@@ -71,15 +91,10 @@ dxd_GSE67333 <- DEXSeqDataSet(
 dxd_GSE67333 <- estimateSizeFactors(dxd_GSE67333)
 dxd_GSE67333 <- estimateDispersions(dxd_GSE67333, BPPARAM = BPPARAM_GSE67333)
 
-# Note: If confounders are added to design, specify both fullModel and reducedModel here:
-# fullModel = ~ sample + exon + condition:exon + sex:exon,
-# reducedModel = ~ sample + exon + sex:exon
-# according to the exercise in the class
-
 dxd_GSE67333 <- testForDEU(
   dxd_GSE67333,
-  fullModel = ~ sample + exon + condition:exon,
-  reducedModel = ~ sample + exon,
+  fullModel = ~ sample + exon + sex:exon + age_scaled:exon + condition:exon,
+  reducedModel = ~ sample + exon + sex:exon + age_scaled:exon,
   BPPARAM = BPPARAM_GSE67333
 )
 
@@ -91,7 +106,6 @@ dxr_GSE67333 <- DEXSeqResults(dxd_GSE67333)
 # extract isoform-level and collapsed gene-level results
 alpha_GSE67333 <- 0.05
 
-# Isoform-level table
 res_isoforms_GSE67333 <- as.data.frame(dxr_GSE67333) |> 
   tibble::as_tibble() |> 
   dplyr::arrange(padj)
@@ -99,10 +113,9 @@ res_isoforms_GSE67333 <- as.data.frame(dxr_GSE67333) |>
 sig_isoforms_GSE67333 <- res_isoforms_GSE67333 |> 
   dplyr::filter(!is.na(padj), padj < alpha_GSE67333)
 
-# Automatically detect log2fold column name
 lfc_col_GSE67333 <- grep("^log2fold_", colnames(res_isoforms_GSE67333), value = TRUE)[1]
 
-# Collapse to gene-level keeping the most significant isoform per gene (preserves stat & log2FC for fgsea)
+# collapse to gene-level keeping the most significant isoform per gene (preserves stat & log2FC for fgsea)
 res_genes_GSE67333 <- res_isoforms_GSE67333 |> 
   dplyr::filter(!is.na(stat)) |> 
   dplyr::select(
@@ -122,12 +135,12 @@ res_genes_GSE67333 <- res_isoforms_GSE67333 |>
 sig_genes_GSE67333 <- res_genes_GSE67333 |> 
   dplyr::filter(!is.na(padj), padj < alpha_GSE67333)
 
-# Summary counts
+# summary
 cat("Significant isoforms (FDR < 0.05):", nrow(sig_isoforms_GSE67333), "\n")
 cat("Unique genes from significant isoforms:", length(unique(sig_isoforms_GSE67333$groupID)), "\n")
 cat("Significant genes after gene-level FDR:", nrow(sig_genes_GSE67333), "\n")
 
-# Save results to results/DEXSeqGSE67333
+# save results to results/DEXSeqGSE67333
 readr::write_csv(res_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_isoforms_GSE67333.csv"))
 readr::write_csv(sig_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_isoforms_GSE67333.csv"))
 readr::write_csv(res_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_genes_GSE67333.csv"))
@@ -153,28 +166,33 @@ plotMA(dxr_GSE67333, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Iso
 ```
 
 ```{r}
-# 3. Volcano plot
+# 3. Volcano plot 
 volcano_df_GSE67333 <- res_isoforms_GSE67333 |> 
   dplyr::filter(!is.na(padj), !is.na(.data[[lfc_col_GSE67333]])) |> 
   dplyr::mutate(
     sig = dplyr::case_when(
-      padj < 0.05 & .data[[lfc_col_GSE67333]] > 1  ~ "Up (padj < 0.05 & |LFC| > 1)",
-      padj < 0.05 & .data[[lfc_col_GSE67333]] < -1 ~ "Down (padj < 0.05 & |LFC| > 1)",
+      padj < 0.05 & .data[[lfc_col_GSE67333]] > 0 ~ "Increased usage (padj < 0.05)",
+      padj < 0.05 & .data[[lfc_col_GSE67333]] < 0 ~ "Decreased usage (padj < 0.05)",
       TRUE ~ "Not significant"
     )
   )
 
-volcano_plot_GSE67333 <- ggplot(volcano_df_GSE67333, aes(x = .data[[lfc_col_GSE67333]], y = -log10(padj), color = sig)) +
+volcano_plot_GSE67333 <- ggplot(
+  volcano_df_GSE67333,
+  aes(x = .data[[lfc_col_GSE67333]], y = -log10(padj), color = sig)
+) +
   geom_point(alpha = 0.6, size = 1.5) +
   scale_color_manual(values = c(
-    "Up (padj < 0.05 & |LFC| > 1)" = "#D55E00",
-    "Down (padj < 0.05 & |LFC| > 1)" = "#0072B2",
+    "Increased usage (padj < 0.05)" = "#D55E00",
+    "Decreased usage (padj < 0.05)" = "#0072B2",
     "Not significant" = "grey75"
   )) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
-  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey40") +
+  coord_cartesian(xlim = c(-10, 10)) +
   labs(
     title = "Differential Isoform Usage - GSE67333",
+    subtitle = "X-axis zoomed to [-10, 10] to exclude unshrunken zero-count LFC boundary artifacts",
     x = paste0("Log2 Fold Change (", lfc_col_GSE67333, ")"),
     y = "-Log10 Adjusted P-value",
     color = "State"
@@ -216,19 +234,52 @@ ggsave(file.path(out_dir_GSE67333, "per_gene_isoform_fraction_GSE67333.png"), pl
 ```
 
 ```{r}
-# 5. Isoform switching profile for the top significant gene
-top_gene_GSE67333 <- res_genes_GSE67333$gene_id[1]
+# 5. Relative isoform usage profile for the top significant gene
+top_gene_raw_GSE67333 <- res_genes_GSE67333$gene_id[1]
 
-plotDEXSeq(
-  dxr_GSE67333,
-  geneID = top_gene_GSE67333,
-  fitExpToVar = "condition",
-  splicing = TRUE,
-  displayTranscripts = TRUE,
-  names = TRUE,
-  legend = TRUE,
-  cex.axis = 1.1,
-  cex = 1.2,
-  main = paste("Isoform Switching (GSE67333):", top_gene_GSE67333)
+norm_counts_GSE67333 <- DEXSeq::featureCounts(dxd_GSE67333, normalized = TRUE)
+gene_rows_GSE67333 <- grep(paste0("^", top_gene_raw_GSE67333, ":"), rownames(norm_counts_GSE67333), value = TRUE)
+
+iso_usage_df_GSE67333 <- as.data.frame(norm_counts_GSE67333[gene_rows_GSE67333, , drop = FALSE]) |> 
+  tibble::rownames_to_column("gene_tx") |> 
+  tidyr::separate(gene_tx, into = c("gene_id", "transcript_id"), sep = ":") |> 
+  tidyr::pivot_longer(
+    cols = -c(gene_id, transcript_id),
+    names_to = "sample_id",
+    values_to = "norm_count"
+  ) |> 
+  dplyr::left_join(metadata_GSE67333, by = "sample_id") |> 
+  dplyr::group_by(sample_id) |> 
+  dplyr::mutate(
+    gene_total = sum(norm_count),
+    isoform_prop = dplyr::if_else(gene_total > 0, norm_count / gene_total, 0)
+  ) |> 
+  dplyr::ungroup()
+
+iso_switch_plot_GSE67333 <- ggplot(
+  iso_usage_df_GSE67333,
+  aes(x = transcript_id, y = isoform_prop, fill = condition)
+) +
+  geom_boxplot(alpha = 0.75, outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  geom_point(
+    aes(color = condition),
+    position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8),
+    size = 2, alpha = 0.85
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = paste("Relative Isoform Usage (GSE67333):", top_gene_raw_GSE67333),
+    x = "Transcript ID",
+    y = "Relative Isoform Proportion (% of Gene Expression)",
+    fill = "Condition",
+    color = "Condition"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+iso_switch_plot_GSE67333
+ggsave(
+  file.path(out_dir_GSE67333, paste0("isoform_usage_", top_gene_raw_GSE67333, "_GSE67333.png")),
+  plot = iso_switch_plot_GSE67333, width = 8, height = 5, dpi = 300
 )
 ```
