@@ -225,5 +225,5 @@ frac_plot_GSE173955 <- ggplot(per_gene_frac_GSE173955, aes(x = frac_sig)) +
   theme_minimal(base_size = 12)
 
 frac_plot_GSE173955
-ggsave(file.path(out_dir_GSE173955, "per_gene_isoform_fraction_GSE173955.png"), plot = frac_plot_GSE173955, width = 8, height = 5, dpi = 300)
+ggsave(file.path(out_dir_GSE173955, "per_gene_isoform_fraction_GSE173955.png"), plot = frac_plot_GSE173955, width = 8, height = 5, dpi = 300) 
 ```
