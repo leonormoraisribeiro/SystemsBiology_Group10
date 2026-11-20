@@ -70,33 +70,6 @@ tx2gene_df_GSE173955 <- readr::read_rds(
 ```
 
 ```{r}
-# build transcript-to-gene mapping table for DEXSeq
-if (grepl("\\|", rownames(isoform_counts_GSE173955)[1])) {
-  tx2gene_df_GSE173955 <- tibble::tibble(raw_id = rownames(isoform_counts_GSE173955)) |> 
-    tidyr::separate(raw_id, into = c("col1", "col2"), sep = "\\|", remove = FALSE, extra = "drop") |> 
-    dplyr::mutate(
-      transcript_id = dplyr::if_else(grepl("^ENST", col1), col1, col2),
-      gene_id = dplyr::if_else(grepl("^ENSG", col1), col1, col2)
-    ) |> 
-    dplyr::select(transcript_id, gene_id)
-  
-  rownames(isoform_counts_GSE173955) <- tx2gene_df_GSE173955$transcript_id
-} else {
-  loaded_objs_GSE173955 <- mget(ls(), envir = .GlobalEnv)
-  annot_candidates_GSE173955 <- Filter(
-    function(x) is.data.frame(x) && all(c("transcript_id", "gene_id") %in% colnames(x)),
-    loaded_objs_GSE173955
-  )
-  
-  if (length(annot_candidates_GSE173955) > 0) {
-    tx2gene_df_GSE173955 <- annot_candidates_GSE173955[[1]] |> 
-      dplyr::select(transcript_id, gene_id) |> 
-      dplyr::distinct()
-  }
-}
-```
-
-```{r}
 dds_qc_GSE173955 <- DESeqDataSetFromMatrix(
   countData = round(as.matrix(gene_counts_GSE173955)),
   colData = as.data.frame(metadata_GSE173955),

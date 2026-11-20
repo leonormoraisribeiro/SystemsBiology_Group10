@@ -4,10 +4,23 @@ format: html
 editor: visual
 ---
 
+## Data Exploration
+
 ## Analysis GSE67333
 
+Load Library
+
 ```{r}
-load(file='/home/projects/22140/exam_data/exam_functions.Rdata')
+library(tidyverse)
+library(DESeq2)
+library(DEXSeq)
+library(BiocParallel)
+library(fgsea)
+library(msigdbr)
+```
+
+```{r}
+load(file = "/home/projects/22140/exam_data/exam_functions.Rdata")
 ```
 
 ```{r}
@@ -21,7 +34,81 @@ gene_counts_GSE67333 <- extractGeneCountMatrixFromIsoCounts(
 ```
 
 ```{r}
-saveRDS(gene_counts_GSE67333,
-        "data/processed/GSE67333/gene_counts.rds"
+dir.create("data/processed/GSE67333", recursive = TRUE, showWarnings = FALSE)
+
+metadata_GSE67333 <- readr::read_csv("data/metadata/GSE67333_metadata_clean.csv", show_col_types = FALSE) |> 
+  dplyr::mutate(
+    condition = factor(condition, levels = c("Control", "AD")),
+    sex = factor(tolower(sex)),
+    age_scaled = as.numeric(scale(age))
+  )
+
+stopifnot(all(metadata_GSE67333$sample_id %in% colnames(gene_counts_GSE67333)))
+stopifnot(all(metadata_GSE67333$sample_id %in% colnames(isoform_counts_GSE67333)))
+
+gene_counts_GSE67333 <- gene_counts_GSE67333[, metadata_GSE67333$sample_id]
+isoform_counts_GSE67333 <- isoform_counts_GSE67333[, metadata_GSE67333$sample_id]
+
+saveRDS(gene_counts_GSE67333, "data/processed/GSE67333/gene_counts.rds")
+saveRDS(isoform_counts_GSE67333, "data/processed/GSE67333/isoform_counts.rds")
+saveRDS(metadata_GSE67333, "data/processed/GSE67333/metadata_aligned.rds")
+```
+
+```{r}
+# Load exact transcript-to-gene annotation used by the course function
+tx2gene_df_GSE67333 <- readr::read_rds(
+  "/home/projects/22140/exam_data/Homo_sapiens.GRCh38.107.chr_patch_hapl_scaff_tx_info.Rds"
+) |> 
+  dplyr::select(transcript_id, gene_id) |> 
+  dplyr::distinct(transcript_id, .keep_all = TRUE)
+```
+
+```{r}
+dds_qc_GSE67333 <- DESeqDataSetFromMatrix(
+  countData = round(as.matrix(gene_counts_GSE67333)),
+  colData = as.data.frame(metadata_GSE67333),
+  design = ~ sex + age_scaled + condition
 )
+
+keep_genes_qc_GSE67333 <- rowSums(counts(dds_qc_GSE67333) >= 10) >= 3
+dds_qc_GSE67333 <- dds_qc_GSE67333[keep_genes_qc_GSE67333, ]
+
+vsd_GSE67333 <- vst(dds_qc_GSE67333, blind = TRUE)
+pca_data_GSE67333 <- plotPCA(vsd_GSE67333, intgroup = c("condition", "sex", "age", "apoe_genotype"), returnData = TRUE)
+percentVar_GSE67333 <- round(100 * attr(pca_data_GSE67333, "percentVar"))
+
+ggplot(pca_data_GSE67333, aes(x = PC1, y = PC2, color = condition, shape = sex)) +
+  geom_point(size = 3.5, alpha = 0.85) +
+  labs(
+    title = "PCA - GSE67333",
+    x = paste0("PC1: ", percentVar_GSE67333[1], "% variance"),
+    y = paste0("PC2: ", percentVar_GSE67333[2], "% variance")
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+ggplot(pca_data_GSE67333, aes(x = PC1, y = PC2, color = age, shape = condition)) +
+  geom_point(size = 3.5, alpha = 0.9) +
+  scale_color_viridis_c() +
+  labs(
+    title = "PCA - GSE67333 colored by Age",
+    x = paste0("PC1: ", percentVar_GSE67333[1], "% variance"),
+    y = paste0("PC2: ", percentVar_GSE67333[2], "% variance")
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+vsd_corrected_GSE67333 <- vsd_GSE67333
+assay(vsd_corrected_GSE67333) <- limma::removeBatchEffect(
+  assay(vsd_GSE67333),
+  batch = metadata_GSE67333$sex,
+  covariates = metadata_GSE67333$age_scaled,
+  design = model.matrix(~ condition, data = metadata_GSE67333)
+)
+
+plotPCA(vsd_corrected_GSE67333, intgroup = "condition") +
+  ggtitle("PCA - GSE67333 with age and sex correction") +
+  theme_minimal(base_size = 12)
 ```
