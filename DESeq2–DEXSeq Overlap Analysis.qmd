@@ -1,0 +1,242 @@
+---
+title: "DESeq2–DEXSeq Overlap Analysis"
+format: html
+editor: visual
+---
+
+# DESeq2-DEXSeq Overlap Analysis
+
+This analysis examines whether genes identified as significant by DESeq2 overlap with genes showing significant differential isoform usage by DEXSeq more than expected by chance.
+
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Define the significance threshold
+alpha <- 0.05
+```
+
+## GSE67333
+
+1\) Loading the complete DESeq and DEXSeq data
+
+```{r}
+# Load the complete DESeq2 results for GSE67333
+deseq_67333 <- read.csv(
+  "results/DESeq2GSE67333/DESeq2_all_genes.csv"
+)
+
+# Inspect the dimensions of the DESeq2 results
+dim(deseq_67333)
+
+# Inspect the column names
+colnames(deseq_67333)
+
+# Inspect the first rows
+head(deseq_67333)
+
+```
+
+```{r}
+# Load the complete gene-level DEXSeq results for GSE67333
+dex_67333 <- read.csv(
+  "results/DEXSeqGSE67333/DEXSeq_all_genes_GSE67333.csv"
+)
+
+# Inspect the dimensions of the DEXSeq results
+dim(dex_67333)
+
+# Inspect the column names
+colnames(dex_67333)
+
+# Inspect the first rows
+head(dex_67333)
+```
+
+2\) Defining Significant Genes
+
+```{r}
+# Define significant genes in the DEXSeq results
+dex_gene_67333 <- dex_67333 %>%
+  mutate(
+    dex_padj = padj,
+    dex_sig = !is.na(padj) & padj < alpha
+  )
+
+# Define significant genes in the DESeq2 results
+deseq_gene_67333 <- deseq_67333 %>%
+  mutate(
+    deseq_padj = padj,
+    deseq_sig = !is.na(padj) & padj < alpha
+  )
+
+# Define the gene universe as genes present in both analyses
+univ_67333 <- intersect(
+  dex_gene_67333$gene_id,
+  deseq_gene_67333$gene_id
+)
+
+# Count the number of genes in the common universe
+length(univ_67333)
+```
+
+3\) Overlap - GSE67333
+
+```{r}
+# Combine DEXSeq and DESeq2 significance results for the common gene universe
+both_67333 <- dex_gene_67333 %>%
+  filter(gene_id %in% univ_67333) %>%
+  inner_join(
+    deseq_gene_67333 %>%
+      filter(gene_id %in% univ_67333),
+    by = "gene_id"
+  )
+
+# Create the 2x2 contingency table
+contigency_table_67333 <- table(
+  DEXSeq = both_67333$dex_sig,
+  DESeq2 = both_67333$deseq_sig
+)
+
+# Display the contingency table
+contigency_table_67333
+```
+
+In **GSE67333**:
+
+-   16,585 genes were non-significant in both analyses
+
+-   26 genes were significant only in DESeq2
+
+-   1,328 genes were significant only in DEXSeq
+
+-   5 genes were significant in both DESeq2 and DEXSeq.
+
+*\*\*(The significance of this overlap will next be tested using Fisher’s exact test)*
+
+4\) Fisher's Exact Test
+
+```{r}
+# Test whether the overlap between DESeq2 and DEXSeq is greater than expected by chance
+fisher_67333 <- fisher.test(
+  contigency_table_67333,
+  alternative = "greater"
+)
+
+# Display the Fisher's exact test result
+fisher_67333
+```
+
+**Fisher’s exact test** :
+
+Showed an odds ratio of approx 2.40, suggesting a positive association between significance in DEXSeq and DESeq2. However, the overlap was not statistically significant (p = 0.076), so we cannot say that the 5 genes significant in both analyses represent a greater overlap than expected by chance.
+
+## GSE173955
+
+1\) Loading the complete Deseq and Dexseq data
+
+```{r}
+# Load the complete DESeq2 results for GSE173955
+deseq_173955 <- read.csv(
+  "results/DESeq2GSE173955_age_sex/DESeq2_age_sex_all_genes.csv"
+)
+
+# Inspect the dimensions of the DESeq2 results
+dim(deseq_173955)
+
+# Inspect the column names
+colnames(deseq_173955)
+```
+
+```{r}
+# Load the complete gene-level DEXSeq results for GSE173955
+dex_173955 <- read.csv(
+  "results/DEXSeqGSE173955/DEXSeq_all_genes_GSE173955.csv"
+)
+
+# Inspect the dimensions of the DEXSeq results
+dim(dex_173955)
+
+# Inspect the column names
+colnames(dex_173955)
+```
+
+2\) Defining Significant Genes
+
+```{r}
+# Define significant genes in the DEXSeq results
+dex_gene_173955 <- dex_173955 %>%
+  mutate(
+    dex_padj = padj,
+    dex_sig = !is.na(padj) & padj < alpha
+  )
+
+# Define significant genes in the DESeq2 results
+deseq_gene_173955 <- deseq_173955 %>%
+  mutate(
+    deseq_padj = padj,
+    deseq_sig = !is.na(padj) & padj < alpha
+  )
+
+# Define the gene universe as genes present in both analyses
+univ_173955 <- intersect(
+  dex_gene_173955$gene_id,
+  deseq_gene_173955$gene_id
+)
+
+# Count the number of genes in the common universe
+length(univ_173955)
+```
+
+3\) Overlap - GSE173955
+
+```{r}
+# Combine DEXSeq and DESeq2 significance results for the common gene universe
+both_173955 <- dex_gene_173955 %>%
+  filter(gene_id %in% univ_173955) %>%
+  inner_join(
+    deseq_gene_173955 %>%
+      filter(gene_id %in% univ_173955),
+    by = "gene_id"
+  )
+
+# Create the 2x2 contingency table
+contig_tab_173955 <- table(
+  DEXSeq = both_173955$dex_sig,
+  DESeq2 = both_173955$deseq_sig
+)
+
+# Display the contingency table
+contig_tab_173955
+```
+
+In **GSE173955:**
+
+-   15,972 genes were non-significant in both analyses
+
+-   10 genes were significant only in DESeq2
+
+-   197 genes were significant only in DEXSeq
+
+-   no genes were significant in both DESeq2 and DEXSeq.
+
+4\) Fisher's Exact Test
+
+```{r}
+# Test whether the overlap between DESeq2 and DEXSeq is greater than expected by chance
+fisher_173955 <- fisher.test(
+  contig_tab_173955,
+  alternative = "greater"
+)
+
+# Display the Fisher's exact test result
+fisher_173955
+```
+
+**Fisher’s exact test:**
+
+Showed no enrichment of overlap between DESeq2 and DEXSeq in GSE173955 (odds ratio = 0, p = 1). No genes were significant in both analyses, indicating that differential gene expression and differential isoform usage identified distinct sets of genes in this dataset.
+
+*\*\*Comparison for the presentation\*\**
+
+A significant overlap between differential gene expression and differential isoform usage was not observed in either dataset.
