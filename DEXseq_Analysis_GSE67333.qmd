@@ -168,7 +168,7 @@ readr::write_csv(sig_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_gen
 saveRDS(dxr_GSE67333, file.path(out_dir_GSE67333, "dxr_GSE67333.rds"))
 ```
 
-The summary reports the number of isoforms passing genome-wide multiple-testing correction (FDR\<0.05),the corresponding number of unique genes represented among those isoforms, and the total count of genes with significant differential isoform usage after collapsing to one lead isoform per gene and recalculating gene-level FDR.
+The summary reports the number of isoforms passing genome-wide multiple-testing correction (FDR \<0.05),the corresponding number of unique genes represented among those isoforms, and the total count of genes with significant differential isoform usage after collapsing to one lead isoform per gene and recalculating gene-level FDR.
 
 Display the top 10 genes ranked by gene-level significance, showing each gene's lead isoform (`isoform_id`), likelihood ratio test statistic (`stat`), estimated `log2FC`, raw `pvalue`, and gene-level `padj`.
 
@@ -190,16 +190,16 @@ plotDispEsts(dxd_GSE67333, main = "DEXSeq - Dispersion Estimation (GSE67333)")
 
 The dispersion diagnostic plot confirms a well-calibrated negative binomial fit across the full expression range (`1e+01` to `1e+06` mean normalized counts): individual isoform dispersion estimates (black dots) follow a smooth, monotonically decreasing mean-dispersion trend (red curve), while empirical Bayes shrinkage pulls noisy estimates toward the fitted curve (blue dots) and retains high-dispersion outliers (circled in blue) to prevent false-positive calls.
 
-Generate an MA plot displaying log2 isoform usage fold changes against mean normalized expression across all tested transcripts, highlighting statistically significant isoforms (FDR<0.05) in red.
+Generate an MA plot displaying log2 isoform usage fold changes against mean normalized expression across all tested transcripts, highlighting statistically significant isoforms (FDR\<0.05) in red.
 
 ```{r}
 # 2. MA plot
 plotMA(dxr_GSE67333, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Isoform Usage (GSE67333)")
 ```
 
-The MA plot shows a symmetric funnel centered around log2​FC=0, where fold-change variance narrows progressively as mean normalized expression increases, and statistically significant isoforms (red) span moderate-to-high abundance transcripts rather than noisy low-count features.
+The MA plot shows a symmetric funnel centered around log2 FC=0, where fold-change variance narrows progressively as mean normalized expression increases, and statistically significant isoforms (red) span moderate-to-high abundance transcripts rather than noisy low-count features.
 
-Visualize statistical significance (−log10​(padj) on a square-root scale) against magnitude and direction of isoform usage change (log2​FC), highlighting isoforms with increased relative usage (`padj < 0.05` and log2​FC>0, orange) and decreased relative usage (`padj < 0.05` and log2​FC<0, blue). The horizontal axis is restricted to [−10,10] via `coord_cartesian()` to exclude extreme unshrunken boundary estimates from zero-count groups.
+Visualize statistical significance (−log10 (padj) on a square-root scale) against magnitude and direction of isoform usage change (log2 FC), highlighting isoforms with increased relative usage (`padj < 0.05` and log2 FC\>0, orange) and decreased relative usage (`padj < 0.05` and log2 FC\<0, blue). The horizontal axis is restricted to \[−10,10\] via `coord_cartesian()` to exclude extreme unshrunken boundary estimates from zero-count groups.
 
 ```{r}
 # 3. Volcano plot (sqrt y-scale so main distribution is not compressed by top outliers)
@@ -239,9 +239,9 @@ volcano_plot_GSE67333
 ggsave(file.path(out_dir_GSE67333, "volcano_plot_GSE67333.png"), plot = volcano_plot_GSE67333, width = 8, height = 6, dpi = 300)
 ```
 
-In **GSE67333**, significant isoforms (FDR<0.05) show an asymmetric shift toward increased relative usage in `AD` (orange points reaching −log10​(padj)≈24.5) compared with decreased usage (blue points reaching −log10​(padj)≈6). Unlike standard gene-level `DESeq2` volcano plots, points also rise close to log2​FC=0 because `padj` is derived from the covariate-adjusted likelihood ratio test (`testForDEU`) whereas marginal `log2FC` is estimated separately, and because relative isoform proportions within a gene must sum to 100% (so a modest proportional drop in a dominant isoform yields larger positive log2​FC shifts in minor isoforms, amplified here by `GSE67333`'s total RNA / `RiboZero` library preparation).
+In **GSE67333**, significant isoforms (FDR\<0.05) show an asymmetric shift toward increased relative usage in `AD` (orange points reaching −log10 (padj)≈24.5) compared with decreased usage (blue points reaching −log10 (padj)≈6). Unlike standard gene-level `DESeq2` volcano plots, points also rise close to log2 FC=0 because `padj` is derived from the covariate-adjusted likelihood ratio test (`testForDEU`) whereas marginal `log2FC` is estimated separately, and because relative isoform proportions within a gene must sum to 100% (so a modest proportional drop in a dominant isoform yields larger positive log2 FC shifts in minor isoforms, amplified here by `GSE67333`'s total RNA / `RiboZero` library preparation).
 
-For every gene with at least one significant isoform (FDR<0.05), compute the fraction of its expressed isoforms that are differentially used (`n_sig / n_iso`) and plot the distribution as a histogram.
+For every gene with at least one significant isoform (FDR\<0.05), compute the fraction of its expressed isoforms that are differentially used (`n_sig / n_iso`) and plot the distribution as a histogram.
 
 ```{r}
 # 4. Per-gene fraction of significant isoforms histogram (Optional challenge #3 in exercise)
@@ -274,3 +274,16 @@ ggsave(file.path(out_dir_GSE67333, "per_gene_isoform_fraction_GSE67333.png"), pl
 ```
 
 Among affected genes in **GSE67333**, the fraction of differentially used isoforms peaks primarily at low ratios (`0.05`–`0.15`),confirming selective isoform switching within multi-isoform loci. Smaller discrete peaks appear at `0.33` (1/3), `0.50` (1/2), and `1.00` (2/2), the latter representing two-isoform genes in which a reciprocal shift in relative usage makes both transcripts statistically significant.
+
+### Save Essential Results for Cross-Dataset and DESeq2 Integration
+
+Export the isoform-level and gene-level result tables (`.csv`) required for downstream dataset integration (GSE173955 vs. GSE67333) and functional comparison against `DESeq2` via Over-Representation Analysis (ORA) and Gene Set Enrichment Analysis (`fgseaMultilevel`).
+
+```{r}
+dir.create(out_dir_GSE67333, recursive = TRUE, showWarnings = FALSE) 
+
+readr::write_csv(res_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_isoforms_GSE67333.csv")) 
+readr::write_csv(sig_isoforms_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_isoforms_GSE67333.csv")) 
+readr::write_csv(res_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_all_genes_GSE67333.csv")) 
+readr::write_csv(sig_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_genes_GSE67333.csv"))
+```
