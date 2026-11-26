@@ -1,0 +1,458 @@
+---
+title: "Gene Set Enrichment and Overrepresentation Analysis"
+format: html
+editor: visual
+---
+
+## Aim
+
+The aim of the Overrepresentation Analysis (ORA) is to determine whether specific functional gene sets are statistically overrepresented among genes identified as significant by the differential gene expression analysis, compared with the background set of genes eligible for selection.
+
+1\) Loading the Libraries
+
+```{r}
+# Loading Libraries
+library(tidyverse)
+library(msigdbr)
+library(fgsea)
+
+# Setting the significance threshold at 5% FDR
+alpha <- 0.05
+```
+
+## **\## GSE67333**
+
+1\) Loading DESeq2 Results – GSE67333 dataset
+
+```{r}
+# Defining the path to the complete DESeq2 results for GSE67333
+file_67333 <- "results/DESeq2GSE67333/DESeq2_all_genes.csv"
+
+# Checking that the DESeq2 result file exists in the specified path
+file.exists(file_67333)
+
+# Loading the complete DESeq2 results into R
+res_67333 <- read.csv(file_67333)
+
+# Checking the dimensions of the DESeq2 result table
+dim(res_67333)
+
+# Checking the available columns in the DESeq2 result table
+colnames(res_67333)
+
+# Inspecting the first rows of the DESeq2 result table
+head(res_67333)
+```
+
+2\) Inspecting the gene IDs
+
+```{r}
+# Inspecting the first gene IDs in the DESeq2 results
+head(res_67333$gene_id)
+# The DESeq2 gene identifiers were inspected and were already formatted as Ensembl gene IDs without version suffixes. Therefore, no additional gene ID cleaning was required.
+```
+
+3\) Preparing Gene Ontology Gene Sets
+
+```{r}
+# Retrieving Biological Process gene sets from MSigDB
+BP_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "BP"
+)
+
+# Converting Biological Process gene sets into the named list required by fora()
+BP_list <- split(
+  x = BP_df$ensembl_gene,
+  f = BP_df$gs_name
+)
+
+# Retrieving Molecular Function gene sets from MSigDB
+MF_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "MF"
+)
+
+# Converting Molecular Function gene sets into the named list required by fora()
+MF_list <- split(
+  x = MF_df$ensembl_gene,
+  f = MF_df$gs_name
+)
+
+# Retrieving Cellular Component gene sets from MSigDB
+CC_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "CC"
+)
+
+# Converting Cellular Component gene sets into the named list required by fora()
+CC_list <- split(
+  x = CC_df$ensembl_gene,
+  f = CC_df$gs_name
+)
+```
+
+```{r}
+# Inspecting the Biological Process gene-set table
+head(BP_df)
+
+# Checking the structure of the Biological Process gene-set list
+str(BP_list, max.level = 1)
+
+# Checking how many Biological Process gene sets were retrieved
+length(BP_list)
+
+# Inspecting the first Biological Process gene set
+head(BP_list, 1)
+
+```
+
+4\) Defining Background and Target
+
+```{r}
+# Keeping genes with an available adjusted p-value
+tested_67333 <- res_67333 |>
+  filter(!is.na(padj))
+
+# Defining the ORA background as all genes eligible for selection
+background_67333 <- unique(tested_67333$gene_id)
+
+# Defining the ORA target as genes significant at FDR < 0.05
+target_67333 <- unique(
+  tested_67333$gene_id[
+    tested_67333$padj < alpha
+  ]
+)
+
+# Checking the number of genes in the background
+length(background_67333)
+
+# Checking the number of significant genes in the target
+length(target_67333)
+```
+
+5\) Running Overrepresentation Analysis
+
+##The ORA background was defined as the genes with an available DESeq2 adjusted p-value, representing the genes eligible for selection. Genes with an adjusted p-value below 0.05 were defined as the target gene set.
+
+```{r}
+# Running ORA for Biological Process gene sets
+ora_BP_67333 <- fora(
+  BP_list,
+  target_67333,
+  background_67333
+)
+
+# Running ORA for Molecular Function gene sets
+ora_MF_67333 <- fora(
+  MF_list,
+  target_67333,
+  background_67333
+)
+
+# Running ORA for Cellular Component gene sets
+ora_CC_67333 <- fora(
+  CC_list,
+  target_67333,
+  background_67333
+)
+```
+
+```{r}
+# Inspecting the ORA result columns
+colnames(ora_BP_67333)
+
+# Inspecting the first Biological Process ORA results
+head(ora_BP_67333)
+```
+
+6\) Calculating Relative Enrichment
+
+\## Relative enrichment was calculated for each GO term to quantify how strongly significant genes were overrepresented relative to the background gene set.
+
+```{r}
+# Creating a function to calculate the relative enrichment of each GO term
+compute_enrichment <- function(ora, n_genes, n_universe) {
+  
+  # Calculating the relative risk for each GO term
+  ora$relative_risk <-
+    (ora$overlap / ora$size) /
+    (n_genes / n_universe)
+  
+  # Returning the ORA results with the new relative_risk column
+  return(ora)
+}
+
+# Calculating relative enrichment for Biological Process results
+ora_BP_67333 <- compute_enrichment(
+  ora_BP_67333,
+  length(target_67333),
+  length(background_67333)
+)
+
+# Calculating relative enrichment for Molecular Function results
+ora_MF_67333 <- compute_enrichment(
+  ora_MF_67333,
+  length(target_67333),
+  length(background_67333)
+)
+
+# Calculating relative enrichment for Cellular Component results
+ora_CC_67333 <- compute_enrichment(
+  ora_CC_67333,
+  length(target_67333),
+  length(background_67333)
+)
+
+# Inspecting the Biological Process results
+head(ora_BP_67333)
+```
+
+7\) Significantly Enriched GO Terms
+
+```         
+```
+
+```{r}
+# Selecting significant Biological Process GO terms
+sig_BP_67333 <- ora_BP_67333 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Selecting significant Molecular Function GO terms
+sig_MF_67333 <- ora_MF_67333 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Selecting significant Cellular Component GO terms
+sig_CC_67333 <- ora_CC_67333 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Selecting the top 10 significant Biological Process GO terms
+top10_BP_67333 <- head(sig_BP_67333, 10)
+
+# Selecting the top 10 significant Molecular Function GO terms
+top10_MF_67333 <- head(sig_MF_67333, 10)
+
+# Selecting the top 10 significant Cellular Component GO terms
+top10_CC_67333 <- head(sig_CC_67333, 10)
+
+# Displaying the top 10 results
+top10_BP_67333
+top10_MF_67333
+top10_CC_67333
+```
+
+```{r}
+# Cheking how many significant terms there are in total
+nrow(sig_BP_67333)
+nrow(sig_MF_67333)
+nrow(sig_CC_67333)
+```
+
+```{r}
+# Displaying the significant Molecular Function GO term
+sig_MF_67333
+
+# Displaying all significant Cellular Component GO terms
+sig_CC_67333
+```
+
+\
+8) Results
+
+-   No **Biological Process** GO terms reached significance at FDR \< 0.05
+
+-   The only significantly enriched **Molecular Function** term was oxidoreduction-driven active transmembrane transporter activity (adjusted p-value = 0.030). Four of the significant differentially expressed genes were associated with this term, which showed approximately 26-fold enrichment relative to the background. This indicates that genes involved in this pathway are overrepresented among the differentially expressed genes in the GSE67333 Alzheimer’s disease dataset.
+
+-   11 **Cellular Component** GO terms were significantly enriched in GSE67333. The enriched terms formed two main patterns. Several terms were associated with membrane and transporter protein complexes, indicating an overrepresentation of differentially expressed genes in membrane-associated cellular structures. A more specific group of terms was related to mitochondrial respiratory machinery, including the respirasome, oxidoreductase complexes, inner mitochondrial membrane protein complexes and respiratory chain complex III. An additional significant term involved the MHC class II protein complex.
+
+## \## GSE173955
+
+1\) Loading DESeq Results - GSE173955 Dataset
+
+```{r}
+# Define the path to the complete age- and sex-adjusted DESeq2 results
+file_173955 <- "results/DESeq2GSE173955_age_sex/DESeq2_age_sex_all_genes.csv"
+
+# Check that the file exists
+file.exists(file_173955)
+
+# Load the complete DESeq2 results
+res_173955 <- read.csv(file_173955)
+
+# Check the dimensions of the result table
+dim(res_173955)
+
+# Check the column names
+colnames(res_173955)
+
+# Inspect the first rows of the result table
+head(res_173955)
+```
+
+2\) Inspecting the gene IDs
+
+```{r}
+# Inspect the first gene identifiers
+head(res_173955$gene_id)
+# The DESeq2 gene identifiers were inspected and were already formatted as Ensembl gene IDs without version suffixes. Therefore, no additional gene ID cleaning was required.
+```
+
+3\) Preparing the Gene Ontology Gene Sets
+
+```{r}
+#GO gene sets
+#The same human GO Biological Process, Molecular Function, and Cellular Component gene sets generated above were reused for the GSE173955 ORA.
+
+# Inspecting the Biological Process gene-set table
+head(BP_df)
+
+# Checking the structure of the Biological Process gene-set list
+str(BP_list, max.level = 1)
+
+# Checking how many Biological Process gene sets were retrieved
+length(BP_list)
+
+# Inspecting the first Biological Process gene set
+head(BP_list, 1)
+
+```
+
+4\) Defining Backround and Target
+
+```{r}
+# Keep only genes that were eligible for significance testing
+tested_173955 <- res_173955 |>
+  filter(!is.na(padj))
+
+# Define the ORA background as all tested genes
+background_173955 <- unique(
+  tested_173955$gene_id
+)
+
+# Define the ORA target as the significant genes
+target_173955 <- unique(
+  tested_173955$gene_id[
+    tested_173955$padj < alpha
+  ]
+)
+
+# Check the number of genes in the background
+length(background_173955)
+
+# Check the number of significant target genes
+length(target_173955)
+```
+
+The ORA background was defined as all genes that were eligible for significance testing in the age- and sex-adjusted DESeq2 analysis. The target consisted of genes with an adjusted p-value below 0.05.
+
+5\) Running Ora
+
+```{r}
+# Run ORA for Biological Process
+ora_BP_173955 <- fora(
+  BP_list,
+  target_173955,
+  background_173955
+)
+
+# Run ORA for Molecular Function
+ora_MF_173955 <- fora(
+  MF_list,
+  target_173955,
+  background_173955
+)
+
+# Run ORA for Cellular Component
+ora_CC_173955 <- fora(
+  CC_list,
+  target_173955,
+  background_173955
+)
+```
+
+6\) Calculating Relative Enrichment
+
+```{r}
+# Calculate relative enrichment for Biological Process
+ora_BP_173955 <- compute_enrichment(
+  ora_BP_173955,
+  length(target_173955),
+  length(background_173955)
+)
+
+# Calculate relative enrichment for Molecular Function
+ora_MF_173955 <- compute_enrichment(
+  ora_MF_173955,
+  length(target_173955),
+  length(background_173955)
+)
+
+# Calculate relative enrichment for Cellular Component
+ora_CC_173955 <- compute_enrichment(
+  ora_CC_173955,
+  length(target_173955),
+  length(background_173955)
+)
+```
+
+7\) Significantly Enriched GO Terms
+
+```{r}
+# Select significant Biological Process terms
+sig_BP_173955 <- ora_BP_173955 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Select significant Molecular Function terms
+sig_MF_173955 <- ora_MF_173955 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Select significant Cellular Component terms
+sig_CC_173955 <- ora_CC_173955 |>
+  filter(padj < alpha) |>
+  arrange(padj, pval)
+
+# Count the number of significant GO terms in each ontology
+nrow(sig_BP_173955)
+nrow(sig_MF_173955)
+nrow(sig_CC_173955)
+```
+
+```{r}
+# Select the top 10 Biological Process terms
+top10_BP_173955 <- head(sig_BP_173955, 10)
+
+# Select the top 10 Molecular Function terms
+top10_MF_173955 <- head(sig_MF_173955, 10)
+
+# Select the top 10 Cellular Component terms
+top10_CC_173955 <- head(sig_CC_173955, 10)
+
+# Display the selected terms
+top10_BP_173955
+top10_MF_173955
+top10_CC_173955
+```
+
+8\) Results - Biological Interpretation
+
+-   Three **Molecular Function** GO terms were significantly enriched in GSE173955. The strongest enrichment was observed for T-cell receptor binding, with four overlapping genes and approximately 101-fold enrichment relative to the background. More broadly, signaling receptor binding and protein-containing complex binding were also significantly enriched, suggesting that receptor-associated and protein-binding molecular functions are overrepresented among the differentially expressed genes.
+
+-   **Biological Process** enrichment showed a strong immune related pattern. The top enriched terms were associated with T-cell activation and proliferation, lymphocyte activation, and leukocyte cell-cell adhesion. Overall, the results indicate that genes involved in T-cell and lymphocyte-related immune processes are strongly overrepresented among the differentially expressed genes in GSE173955.
+
+-   **Cellular Component** enrichment showed significant overrepresentation of membrane associated and immune related structures. Several enriched terms were related to the MHC protein complex, immunological synapse, and plasma membrane protein complexes. Additional enriched terms involved ER-to-Golgi transport and vesicle-associated membrane structures.
+
+**Α small overview of Ora results in both datasets**
+
+**ORA of the DESeq2 results from GSE67333** identified enrichment mainly at the Molecular Function and Cellular Component levels. The enriched terms were associated with membrane and transporter protein complexes, as well as mitochondrial respiratory structures, and inner mitochondrial membrane protein complexes. An additional enriched Cellular Component term involved the MHC class II protein complex. No significant Biological Process terms were identified. Overall, the results suggest that the differential expression signal in GSE67333 is particularly associated with membrane-related and mitochondrial respiratory cellular components.
+
+**ORA of the age- and sex-adjusted DESeq2** results revealed a strong immune-related enrichment pattern in **GSE173955.** Biological Process terms were mainly associated with T-cell and lymphocyte activation and proliferation, while Molecular Function enrichment highlighted T-cell receptor and signaling receptor binding. Cellular Component terms included the MHC protein complex, immunological synapse, and other membrane-associated structures. Together, these results suggest that immune-related, particularly T-cell-associated, functions are strongly overrepresented among the differentially expressed genes in this dataset.
+
+The two datasets did not show exactly the same enriched GO terms, but both showed signals related to immune functions and membrane-associated processes. This may mean that these changes are more consistently linked to Alzheimer’s disease across the two datasets.

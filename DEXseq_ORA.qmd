@@ -1,0 +1,349 @@
+---
+title: "DEXSeq_GO_ORA.qmd"
+format: html
+editor: visual
+---
+
+## DEXSeq Gene Level GO Overrepresantation Analysis 
+
+*\*\*This exploratory analysis investigates whether genes showing significant differential isoform usage are enriched for specific Gene Ontology categories.*
+
+*\*\*The analysis is performed separately for GSE67333 and GSE173955 using gene-level DEXSeq results.*
+
+Load Libraries
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(fgsea)
+library(msigdbr)
+
+# Define the significance threshold
+alpha <- 0.05
+```
+
+**GSE67333**
+
+1\) Load gene- level results
+
+```{r}
+# Load the complete gene-level DEXSeq results for GSE67333
+dex_67333 <- read.csv(
+  "results/DEXSeqGSE67333/DEXSeq_all_genes_GSE67333.csv"
+)
+
+# Inspect the dimensions of the DEXSeq results
+dim(dex_67333)
+
+# Inspect the column names
+colnames(dex_67333)
+
+# Inspect the first rows
+head(dex_67333)
+```
+
+2\) Define target and background
+
+```{r}
+# Keep genes that were eligible for significance testing
+tested_dex_67333 <- dex_67333 %>%
+  filter(!is.na(padj))
+
+# Define the background gene universe
+background_dex_67333 <- unique(tested_dex_67333$gene_id)
+
+# Define significant DEXSeq genes
+target_dex_67333 <- unique(
+  tested_dex_67333$gene_id[tested_dex_67333$padj < alpha]
+)
+
+# Inspect the number of genes in the background and target
+length(background_dex_67333)
+length(target_dex_67333)
+```
+
+3\) GO Gene sets
+
+```{r}
+# Load Biological Process gene sets
+BP_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "BP"
+)
+
+# Convert BP gene sets into a named list
+BP_list <- split(
+  x = BP_df$ensembl_gene,
+  f = BP_df$gs_name
+)
+
+# Load Molecular Function gene sets
+MF_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "MF"
+)
+
+# Convert MF gene sets into a named list
+MF_list <- split(
+  x = MF_df$ensembl_gene,
+  f = MF_df$gs_name
+)
+
+# Load Cellular Component gene sets
+CC_df <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "CC"
+)
+
+# Convert CC gene sets into a named list
+CC_list <- split(
+  x = CC_df$ensembl_gene,
+  f = CC_df$gs_name
+)
+```
+
+4\) Overrepresentation Analysis
+
+```{r}
+# Run ORA for Biological Process
+ora_BP_dex_67333 <- fora(
+  BP_list,
+  target_dex_67333,
+  background_dex_67333
+)
+
+# Run ORA for Molecular Function
+ora_MF_dex_67333 <- fora(
+  MF_list,
+  target_dex_67333,
+  background_dex_67333
+)
+
+# Run ORA for Cellular Component
+ora_CC_dex_67333 <- fora(
+  CC_list,
+  target_dex_67333,
+  background_dex_67333
+)
+```
+
+5\) Calculate Relative Enrichment
+
+```{r}
+# Function to calculate relative enrichment
+compute_enrichment <- function(ora, n_genes, n_universe) {
+  ora$relative_risk <-
+    (ora$overlap / ora$size) /
+    (n_genes / n_universe)
+
+  return(ora)
+}
+
+# Calculate relative enrichment for Biological Process
+ora_BP_dex_67333 <- compute_enrichment(
+  ora_BP_dex_67333,
+  length(target_dex_67333),
+  length(background_dex_67333)
+)
+
+# Calculate relative enrichment for Molecular Function
+ora_MF_dex_67333 <- compute_enrichment(
+  ora_MF_dex_67333,
+  length(target_dex_67333),
+  length(background_dex_67333)
+)
+
+# Calculate relative enrichment for Cellular Component
+ora_CC_dex_67333 <- compute_enrichment(
+  ora_CC_dex_67333,
+  length(target_dex_67333),
+  length(background_dex_67333)
+)
+```
+
+6\) Significantly Enriched GO terms
+
+```{r}
+# Keep significant Biological Process terms
+sig_BP_dex_67333 <- ora_BP_dex_67333 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Keep significant Molecular Function terms
+sig_MF_dex_67333 <- ora_MF_dex_67333 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Keep significant Cellular Component terms
+sig_CC_dex_67333 <- ora_CC_dex_67333 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Count significant terms in each ontology
+nrow(sig_BP_dex_67333)
+nrow(sig_MF_dex_67333)
+nrow(sig_CC_dex_67333)
+```
+
+7\) Top Enriched GO Terms
+
+```{r}
+# Select the top 10 significant Biological Process terms
+top10_BP_dex_67333 <- head(sig_BP_dex_67333, 10)
+
+# Select the top 10 significant Molecular Function terms
+top10_MF_dex_67333 <- head(sig_MF_dex_67333, 10)
+
+# Select the top 10 significant Cellular Component terms
+top10_CC_dex_67333 <- head(sig_CC_dex_67333, 10)
+
+# Display the top 10 Biological Process terms
+top10_BP_dex_67333
+
+# Display the top 10 Molecular Function terms
+top10_MF_dex_67333
+
+# Display the top 10 Cellular Component terms
+top10_CC_dex_67333
+```
+
+8\) Results
+
+-   The **Biological Process** ORA identified 103 significantly enriched terms. The main enriched processes were related to cytoskeleton organization, organelle localization, regulation of transport, and calcium and metal ion transport. Overall, these results show that genes showing differential isoform usage are associated with cellular organization processes.
+
+-   The **Molecular Function** ORA identified 11 significantly enriched terms. The main functions included protein-containing complex binding, calmodulin binding, cytoskeletal protein binding, molecular adaptor activity, and metal ion transmembrane transporter activity. These results support also a role for cytoskeleton-related functions, ion transport, and protein interactions among genes showing differential isoform usage.
+
+-   The **Cellular Component** ORA identified 32 significantly enriched terms. The strongest enrichment was observed for the Golgi apparatus, vacuole, endoplasmic reticulum, membrane protein complexes, synapses, and vesicle-related structures. Overall, these results suggest that differential isoform usage is associated with intracellular membrane systems, vesicle trafficking, and synaptic structures.
+
+**GSE173955**
+
+1\) Load gene-level Results
+
+```{r}
+# Load the complete gene-level DEXSeq results for GSE173955
+dex_173955 <- read.csv(
+  "results/DEXSeqGSE173955/DEXSeq_all_genes_GSE173955.csv"
+)
+
+# Inspect the dimensions of the DEXSeq results
+dim(dex_173955)
+
+# Inspect the column names
+colnames(dex_173955)
+```
+
+2\) Define Target and Backround
+
+```{r}
+# Keep genes that were eligible for significance testing
+tested_dex_173955 <- dex_173955 %>%
+  filter(!is.na(padj))
+
+# Define the background gene universe
+background_dex_173955 <- unique(tested_dex_173955$gene_id)
+
+# Define significant DEXSeq genes
+target_dex_173955 <- unique(
+  tested_dex_173955$gene_id[tested_dex_173955$padj < alpha]
+)
+
+# Inspect the number of genes in the background and target
+length(background_dex_173955)
+length(target_dex_173955)
+```
+
+3\) Overrepresentation Analysis
+
+```{r}
+# Run ORA for Biological Process
+ora_BP_dex_173955 <- fora(
+  BP_list,
+  target_dex_173955,
+  background_dex_173955
+)
+
+# Run ORA for Molecular Function
+ora_MF_dex_173955 <- fora(
+  MF_list,
+  target_dex_173955,
+  background_dex_173955
+)
+
+# Run ORA for Cellular Component
+ora_CC_dex_173955 <- fora(
+  CC_list,
+  target_dex_173955,
+  background_dex_173955
+)
+```
+
+4\) Calculate Relative Enrichment
+
+```{r}
+# Calculate relative enrichment for Biological Process
+ora_BP_dex_173955 <- compute_enrichment(
+  ora_BP_dex_173955,
+  length(target_dex_173955),
+  length(background_dex_173955)
+)
+
+# Calculate relative enrichment for Molecular Function
+ora_MF_dex_173955 <- compute_enrichment(
+  ora_MF_dex_173955,
+  length(target_dex_173955),
+  length(background_dex_173955)
+)
+
+# Calculate relative enrichment for Cellular Component
+ora_CC_dex_173955 <- compute_enrichment(
+  ora_CC_dex_173955,
+  length(target_dex_173955),
+  length(background_dex_173955)
+)
+```
+
+5\) SIgnificant Enriches GO Terms
+
+```{r}
+# Keep significant Biological Process terms
+sig_BP_dex_173955 <- ora_BP_dex_173955 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Keep significant Molecular Function terms
+sig_MF_dex_173955 <- ora_MF_dex_173955 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Keep significant Cellular Component terms
+sig_CC_dex_173955 <- ora_CC_dex_173955 %>%
+  filter(padj < alpha) %>%
+  arrange(padj, pval)
+
+# Count significant terms in each ontology
+nrow(sig_BP_dex_173955)
+nrow(sig_MF_dex_173955)
+nrow(sig_CC_dex_173955)
+```
+
+```{r}
+# Display significant Biological Process terms
+sig_BP_dex_173955
+
+# Display significant Molecular Function terms
+sig_MF_dex_173955
+
+# Display significant Cellular Component terms
+sig_CC_dex_173955
+```
+
+6\) Results
+
+-   The **Biological Process** ORA identified two significant terms, both related to protein localization. This suggests that differential isoform usage may be linked to processes that control where proteins are located inside the cell.
+
+-   The **Molecular Function** ORA identified one significant term related to ATP dependent protein binding. This suggests a possible link between differential isoform usage and protein interactions that require ATP.
+
+-   No significant **Cellular Component** terms were identified in GSE173955.
