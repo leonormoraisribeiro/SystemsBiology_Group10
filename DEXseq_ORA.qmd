@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-## DEXSeq Gene Level GO Overrepresantation Analysis
+## DEXSeq Gene Level GO Overrepresantation Analysis 
 
 *\*\*This exploratory analysis investigates whether genes showing significant differential isoform usage are enriched for specific Gene Ontology categories.*
 
