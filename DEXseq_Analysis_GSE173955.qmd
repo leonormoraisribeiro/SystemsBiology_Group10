@@ -168,7 +168,7 @@ readr::write_csv(sig_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_g
 saveRDS(dxr_GSE173955, file.path(out_dir_GSE173955, "dxr_GSE173955.rds"))
 ```
 
-At the transcript level, **25 isoforms** (across **25 unique genes**) pass the genome-wide significance threshold (FDR<0.05) when correcting simultaneously across all tested transcripts. After collapsing to one lead isoform per gene and recalculating FDR across the smaller universe of multi-isoform genes, **197 genes** exhibit statistically significant differential isoform usage (FDRgene​<0.05).
+At the transcript level, **25 isoforms** (across **25 unique genes**) pass the genome-wide significance threshold (FDR\<0.05) when correcting simultaneously across all tested transcripts. After collapsing to one lead isoform per gene and recalculating FDR across the smaller universe of multi-isoform genes, **197 genes** exhibit statistically significant differential isoform usage (FDRgene \<0.05).
 
 Display the top 10 genes ranked by gene-level significance, showing each gene's lead isoform (`isoform_id`), likelihood ratio statistic (`stat`), estimated `log2FC`, raw `pvalue`, and gene-level `padj`.
 
@@ -188,16 +188,16 @@ plotDispEsts(dxd_GSE173955, main = "DEXSeq - Dispersion Estimation (GSE173955)")
 
 The dispersion diagnostic plot confirms a well-behaved negative binomial fit: individual isoform dispersion estimates (black dots) follow a smooth, monotonically decreasing trend (red curve), and empirical Bayes shrinkage pulls noisy estimates toward the fitted line to produce well-calibrated final dispersions (blue dots) without distortion at low count ranges.
 
-Generate an MA plot displaying log2 isoform usage fold changes against mean normalized expression across all tested transcripts, highlighting statistically significant isoforms (FDR<0.05) in red.
+Generate an MA plot displaying log2 isoform usage fold changes against mean normalized expression across all tested transcripts, highlighting statistically significant isoforms (FDR\<0.05) in red.
 
 ```{r}
 # 2. MA plot
 plotMA(dxr_GSE173955, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Isoform Usage (GSE173955)")
 ```
 
-The MA plot displays a symmetric funnel centered around log2​FC=0, where fold-change variance narrows progressively as mean normalized expression increases, and statistically significant isoforms (red) occur across moderate-to-high expression levels rather than noisy low-count transcripts.
+The MA plot displays a symmetric funnel centered around log2 FC=0, where fold-change variance narrows progressively as mean normalized expression increases, and statistically significant isoforms (red) occur across moderate-to-high expression levels rather than noisy low-count transcripts.
 
-Visualize statistical significance (−log10​(padj)) against magnitude and direction of isoform usage change (log2​FC), highlighting isoforms with increased relative usage (`padj < 0.05` and log2​FC>0, orange) and decreased relative usage (`padj < 0.05` and log2​FC<0, blue). The horizontal axis is restricted to [−10,10] via `coord_cartesian()` so that extreme unshrunken boundary estimates from zero-count groups (≈±15–20) do not compress the primary biological distribution.
+Visualize statistical significance (−log10 (padj)) against magnitude and direction of isoform usage change (log2 FC), highlighting isoforms with increased relative usage (`padj < 0.05` and log2 FC\>0, orange) and decreased relative usage (`padj < 0.05` and log2 FC\<0, blue). The horizontal axis is restricted to \[−10,10\] via `coord_cartesian()` so that extreme unshrunken boundary estimates from zero-count groups (≈±15–20) do not compress the primary biological distribution.
 
 ```{r}
 # 3. Volcano plot (adjusted for DEXSeq: FDR < 0.05 and zoomed to [-10, 10])
@@ -236,9 +236,9 @@ volcano_plot_GSE173955
 ggsave(file.path(out_dir_GSE173955, "volcano_plot_GSE173955.png"), plot = volcano_plot_GSE173955, width = 8, height = 6, dpi = 300)
 ```
 
-The volcano plot highlights all significant isoforms above the dashed threshold line (FDR=0.05) across both increased and decreased relative usage in `AD`. Several top-ranked isoforms share a flat upper ceiling near −log10​(padj)≈2.40 (padj≈0.004) because Benjamini-Hochberg adjustment enforces monotonicity across closely spaced raw p-values (1.22×10−7 to 2.55×10−7).
+The volcano plot highlights all significant isoforms above the dashed threshold line (FDR=0.05) across both increased and decreased relative usage in `AD`. Several top-ranked isoforms share a flat upper ceiling near −log10 (padj)≈2.40 (padj≈0.004) because Benjamini-Hochberg adjustment enforces monotonicity across closely spaced raw p-values (1.22×10−7 to 2.55×10−7).
 
-For every gene with at least one significant isoform (FDR<0.05), compute the fraction of its expressed isoforms that are differentially used (`n_sig / n_iso`) and plot the distribution as a histogram.
+For every gene with at least one significant isoform (FDR\<0.05), compute the fraction of its expressed isoforms that are differentially used (`n_sig / n_iso`) and plot the distribution as a histogram.
 
 ```{r}
 # 4. Per-gene fraction of significant isoforms histogram (Optional challenge #3 in exercise)
@@ -271,3 +271,16 @@ ggsave(file.path(out_dir_GSE173955, "per_gene_isoform_fraction_GSE173955.png"), 
 ```
 
 Among affected genes, the fraction of significant isoforms per gene ranges from 0.02 to 0.25, with a modal peak at 0.20 (1 significant isoform out of 5), confirming that differential isoform usage is driven by selective isoform switching rather than uniform shifts across all transcripts of a gene.
+
+### Save Essential Results for Cross-Dataset and DESeq2 Integration
+
+Export the isoform-level and gene-level result tables (`.csv`) required for downstream dataset integration (GSE173955 vs. GSE67333) and functional comparison against `DESeq2` via Over-Representation Analysis (ORA) and Gene Set Enrichment Analysis (`fgseaMultilevel`).
+
+```{r}
+dir.create(out_dir_GSE173955, recursive = TRUE, showWarnings = FALSE)
+
+readr::write_csv(res_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_isoforms_GSE173955.csv")) 
+readr::write_csv(sig_isoforms_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_isoforms_GSE173955.csv")) 
+readr::write_csv(res_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_all_genes_GSE173955.csv")) 
+readr::write_csv(sig_genes_GSE173955, file.path(out_dir_GSE173955, "DEXSeq_sig_genes_GSE173955.csv"))
+```

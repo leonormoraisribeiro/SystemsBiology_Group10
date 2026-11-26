@@ -1,0 +1,3 @@
+Dataset,Sample_Size,Library_Protocol,Tested_Isoforms,Tested_Genes,Sig_Isoforms_FDR05,Increased_Usage_Isoforms,Decreased_Usage_Isoforms,Sig_Genes_GeneFDR05
+GSE173955,"n = 18 (8 AD, 10 Control)",PolyA-selected mRNA,92593,16179,25,12,13,197
+GSE67333,"n = 8 (4 AD, 4 Control)",Total RNA (RiboZero),107883,17944,459,326,133,1333

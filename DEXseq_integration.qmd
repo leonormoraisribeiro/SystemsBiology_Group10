@@ -1,0 +1,191 @@
+---
+title: "DEXseq_integration"
+format: html
+editor: visual
+---
+
+## DEXseq integration of GSE173955 vs. GSE67333
+
+### 1. Load Libraries, DEXSeq Results, and Gene Annotations
+
+Load the required R packages for data manipulation (`tidyverse`), functional enrichment analysis (`fgsea`, `msigdbr`), and visualization, and create the output directory (`results/CrossDataset_DEXSeq`).
+
+```{r}
+library(tidyverse) 
+library(fgsea) 
+library(msigdbr)
+
+comp_out_dir <- file.path("results", "CrossDataset_DEXSeq") 
+dir.create(comp_out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+Import the isoform-level and collapsed gene-level `DEXSeq` result tables generated for **GSE173955** (n=18n=18, PolyA-selected hippocampal RNA-seq) and **GSE67333** (n=8n=8, Total RNA / RiboZero hippocampal RNA-seq), along with the GRCh38.107 annotation table to map Ensembl gene IDs (`ENSG...`) to human gene symbols.
+
+```{r}
+# Load gene-level and isoform-level DEXSeq results for both cohorts
+all_genes_173955 <- readr::read_csv("results/DEXSeqGSE173955/DEXSeq_all_genes_GSE173955.csv", show_col_types = FALSE)
+sig_genes_173955 <- readr::read_csv("results/DEXSeqGSE173955/DEXSeq_sig_genes_GSE173955.csv", show_col_types = FALSE)
+all_iso_173955   <- readr::read_csv("results/DEXSeqGSE173955/DEXSeq_all_isoforms_GSE173955.csv", show_col_types = FALSE)
+sig_iso_173955   <- readr::read_csv("results/DEXSeqGSE173955/DEXSeq_sig_isoforms_GSE173955.csv", show_col_types = FALSE)
+
+all_genes_67333  <- readr::read_csv("results/DEXSeqGSE67333/DEXSeq_all_genes_GSE67333.csv", show_col_types = FALSE)
+sig_genes_67333  <- readr::read_csv("results/DEXSeqGSE67333/DEXSeq_sig_genes_GSE67333.csv", show_col_types = FALSE)
+all_iso_67333    <- readr::read_csv("results/DEXSeqGSE67333/DEXSeq_all_isoforms_GSE67333.csv", show_col_types = FALSE)
+sig_iso_67333    <- readr::read_csv("results/DEXSeqGSE67333/DEXSeq_sig_isoforms_GSE67333.csv", show_col_types = FALSE)
+
+# Load GRCh38.107 annotation and extract Ensembl gene_id -> HGNC gene_symbol mapping
+tx_info <- readr::read_rds("/home/projects/22140/exam_data/Homo_sapiens.GRCh38.107.chr_patch_hapl_scaff_tx_info.Rds")
+sym_col <- intersect(c("gene_name", "external_gene_name", "symbol", "hgnc_symbol"), colnames(tx_info))[1]
+
+gene_annot <- tx_info |> 
+  dplyr::select(gene_id, gene_symbol = dplyr::all_of(sym_col)) |> 
+  dplyr::filter(!is.na(gene_symbol), gene_symbol != "") |> 
+  dplyr::distinct(gene_id, .keep_all = TRUE)
+
+# Attach gene symbols to gene-level tables
+all_genes_173955 <- dplyr::left_join(all_genes_173955, gene_annot, by = "gene_id")
+sig_genes_173955 <- dplyr::left_join(sig_genes_173955, gene_annot, by = "gene_id")
+all_genes_67333  <- dplyr::left_join(all_genes_67333, gene_annot, by = "gene_id")
+sig_genes_67333  <- dplyr::left_join(sig_genes_67333, gene_annot, by = "gene_id")
+```
+
+### 2. Cohort-Level Summary of Differential Isoform Usage
+
+Compile a side-by-side summary table comparing sample size, library preparation protocol, tested feature space, number of significant isoforms (FDR \<0.05), number of significant genes after gene-level FDR recalculation (FDRgene \<0.05), and directional shifts (Increased vs. Decreased relative usage in AD).
+
+```{r}
+lfc_col_173955 <- grep("^log2fold_", colnames(sig_iso_173955), value = TRUE)[1]
+lfc_col_67333  <- grep("^log2fold_", colnames(sig_iso_67333), value = TRUE)[1]
+
+summary_table <- tibble::tibble(
+  Dataset = c("GSE173955", "GSE67333"),
+  Sample_Size = c("n = 18 (8 AD, 10 Control)", "n = 8 (4 AD, 4 Control)"),
+  Library_Protocol = c("PolyA-selected mRNA", "Total RNA (RiboZero)"),
+  Tested_Isoforms = c(sum(!is.na(all_iso_173955$padj)), sum(!is.na(all_iso_67333$padj))),
+  Tested_Genes = c(nrow(all_genes_173955), nrow(all_genes_67333)),
+  Sig_Isoforms_FDR05 = c(nrow(sig_iso_173955), nrow(sig_iso_67333)),
+  Increased_Usage_Isoforms = c(
+    sum(sig_iso_173955[[lfc_col_173955]] > 0, na.rm = TRUE),
+    sum(sig_iso_67333[[lfc_col_67333]] > 0, na.rm = TRUE)
+  ),
+  Decreased_Usage_Isoforms = c(
+    sum(sig_iso_173955[[lfc_col_173955]] < 0, na.rm = TRUE),
+    sum(sig_iso_67333[[lfc_col_67333]] < 0, na.rm = TRUE)
+  ),
+  Sig_Genes_GeneFDR05 = c(nrow(sig_genes_173955), nrow(sig_genes_67333))
+)
+
+summary_table
+readr::write_csv(summary_table, file.path(comp_out_dir, "cross_study_summary_metrics.csv"))
+```
+
+The summary table highlights marked differences in detection scale between the two hippocampal cohorts. Although **GSE173955** (n=18: 8 `AD`, 10 `Control`) has a larger sample size, **GSE67333** (n=8: 4 `AD`, 4 `Control`) covers a broader transcriptomic feature space (**107,883 tested isoforms** across **17,944 multi-isoform genes** vs. **92,593 isoforms** across **16,179 genes** in **GSE173955**) and identifies 18.4× more significant isoforms (**459** vs. **25** at FDR\<0.05) and 6.8× more significant genes after gene-level FDR recalculation (**1,333** vs. **197** at FDRgene \<0.05). This higher yield in **GSE67333** reflects its deep total RNA sequencing protocol (`RiboZero`, ∼177M reads/sample), which captures non-coding and intron-retained splice variants excluded by polyA selection (`PolyA`) in **GSE173955**.
+
+Visualize the number of significant isoforms and significant genes across both datasets, stratified by the direction of isoform usage change in `AD` (`Increased` vs. `Decreased` relative usage).
+
+```{r}
+dir_plot_df <- dplyr::bind_rows(
+  sig_iso_173955 |> 
+    dplyr::transmute(
+      Dataset = "GSE173955 (n=18, PolyA)",
+      Direction = dplyr::if_else(.data[[lfc_col_173955]] > 0, "Increased in AD", "Decreased in AD")
+    ),
+  sig_iso_67333 |> 
+    dplyr::transmute(
+      Dataset = "GSE67333 (n=8, RiboZero)",
+      Direction = dplyr::if_else(.data[[lfc_col_67333]] > 0, "Increased in AD", "Decreased in AD")
+    )
+) |> 
+  dplyr::filter(!is.na(Direction)) |> 
+  dplyr::count(Dataset, Direction)
+
+p_dir_comp <- ggplot(dir_plot_df, aes(x = Dataset, y = n, fill = Direction)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_text(aes(label = n), position = position_dodge(width = 0.7), vjust = -0.4, size = 3.8) +
+  scale_fill_manual(values = c("Increased in AD" = "#D55E00", "Decreased in AD" = "#0072B2")) +
+  labs(
+    title = "Significant Differentially Used Isoforms by Cohort and Direction",
+    subtitle = "Transcript-level FDR < 0.05",
+    x = NULL,
+    y = "Number of Significant Isoforms",
+    fill = "Usage Shift in AD"
+  ) +
+  theme_minimal(base_size = 12)
+
+p_dir_comp
+ggsave(file.path(comp_out_dir, "sig_isoforms_direction_comparison.png"), p_dir_comp, width = 7.5, height = 5, dpi = 300)
+```
+
+Stratifying significant transcripts (FDR\<0.05) by the direction of relative usage change reveals distinct patterns across protocols. In **GSE173955** (`PolyA`), differentially used isoforms are evenly split between increased (**12 isoforms**, 48.0%) and decreased (**13 isoforms**, 52.0%) usage in `AD`. Conversely, **GSE67333** (`RiboZero`) displays a pronounced directional skew toward increased relative usage in `AD` (**326 isoforms**, 71.0%, vs. **133 isoforms**, 29.0%, with decreased usage), consistent with the accumulation of aberrant, intron-retained, and non-coding transcripts in Alzheimer's disease brain tissue.
+
+### 3. Gene-Level & Isoform-Level Overlap Analysis (Fisher's Exact Test)
+
+Restrict the background universe to the multi-isoform genes tested in **both** studies, compute the exact intersection of significant DIU genes (FDRgene \<0.05) and significant isoforms (FDR\<0.05), and evaluate whether the gene-level overlap exceeds random expectation using a one-sided Fisher's exact test (`alternative = "greater"`).
+
+```{r}
+# Define common tested multi-isoform gene universe
+common_gene_universe <- intersect(all_genes_173955$gene_id, all_genes_67333$gene_id)
+
+sig17_in_univ <- intersect(sig_genes_173955$gene_id, common_gene_universe)
+sig67_in_univ <- intersect(sig_genes_67333$gene_id, common_gene_universe)
+
+n_both      <- length(intersect(sig17_in_univ, sig67_in_univ))
+n_17_only   <- length(setdiff(sig17_in_univ, sig67_in_univ))
+n_67_only   <- length(setdiff(sig67_in_univ, sig17_in_univ))
+n_neither   <- length(setdiff(common_gene_universe, union(sig17_in_univ, sig67_in_univ)))
+
+contingency_mat <- matrix(
+  c(n_both, n_17_only, n_67_only, n_neither),
+  nrow = 2,
+  dimnames = list(
+    GSE173955 = c("Significant", "Not Significant"),
+    GSE67333  = c("Significant", "Not Significant")
+  )
+)
+
+fisher_res <- fisher.test(contingency_mat, alternative = "greater")
+
+cat("Common tested multi-isoform genes:", length(common_gene_universe), "\n")
+cat("Significant DIU genes in GSE173955 (in common universe):", length(sig17_in_univ), "\n")
+cat("Significant DIU genes in GSE67333 (in common universe):", length(sig67_in_univ), "\n")
+cat("Overlapping significant DIU genes:", n_both, "\n")
+cat("Overlapping significant isoforms (transcript-level FDR < 0.05):",
+    length(intersect(sig_iso_173955$featureID, sig_iso_67333$featureID)), "\n\n")
+print(contingency_mat)
+print(fisher_res)
+```
+
+Restricting both datasets to the shared background of **15,039 tested multi-isoform genes** (`193` significant DIU genes in **GSE173955** and `1,258` in **GSE67333** within this common universe), **34 genes** show statistically significant differential isoform usage in both cohorts—representing a 2.11-fold enrichment over random expectation (16.14 genes expected by chance). A one-sided Fisher's exact test confirms that this cross-cohort gene overlap is highly significant (OR=2.38, 95% CI:\[1.69,∞), p=2.48×10−5). At the strict transcriptome-wide transcript threshold (FDR\<0.05), **0 isoforms** overlap directly, primarily because only 25 individual transcripts pass genome-wide multiple-testing correction in **GSE173955**.
+
+```{r}
+shared_diu_genes <- dplyr::inner_join(
+  sig_genes_173955 |> 
+    dplyr::select(
+      gene_id,
+      gene_symbol,
+      isoform_173955 = isoform_id,
+      stat_173955 = stat,
+      log2FC_173955 = log2FC,
+      padj_173955 = padj
+    ),
+  sig_genes_67333 |> 
+    dplyr::select(
+      gene_id,
+      isoform_67333 = isoform_id,
+      stat_67333 = stat,
+      log2FC_67333 = log2FC,
+      padj_67333 = padj
+    ),
+  by = "gene_id"
+) |> 
+  dplyr::mutate(
+    same_lead_isoform = (isoform_173955 == isoform_67333),
+    same_lfc_direction = (sign(log2FC_173955) == sign(log2FC_67333))
+  ) |> 
+  dplyr::arrange(padj_173955)
+
+shared_diu_genes
+readr::write_csv(shared_diu_genes, file.path(comp_out_dir, "shared_DIU_genes_GSE173955_GSE67333.csv"))
+```
+
+Inspecting the 34 replicated DIU genes reveals that 2 genes (5.9%)—PTPRD (ENST00000537002) and COL8A1 (ENST00000652472)— are driven by the exact same lead isoform (same_lead_isoform = TRUE), while 14 of the 34 genes (41.2%) shift in the same direction (same_lfc_direction = TRUE) across both cohorts. In the remaining genes, distinct splice isoforms within the same locus carry the strongest signal across the PolyA and RiboZero libraries. Notably, this shared gene set—led by EEF1D, NCALD, IFT122, XIST, PTPRD, PIK3R1, CAMK2B, and MACF1 (the strongest hit in GSE67333, stat=78.07, padj=1.19×10\^−15)—is enriched for key regulators of synaptic plasticity (CAMK2B, PTPRD), neuronal calcium signaling and ion channels (NCALD, KCNMA1, CACNB3), cytoskeletal integrity (MACF1), cellular stress (HSPA5), and alternative splicing itself (DDX5), pointing to conserved isoform-level dysregulation in Alzheimer's disease.
