@@ -6,6 +6,10 @@ editor: visual
 
 ## DEXSeq Analysis - GSE67333
 
+### 1. Load Libraries and Dataset
+
+Load the core R packages required for data wrangling (`tidyverse`), differential isoform usage testing (`DEXSeq`), and parallel computation (`BiocParallel`), and create the output directory (`results/DEXSeqGSE67333`).
+
 ```{r}
 library(DEXSeq)
 library(tidyverse)
@@ -15,6 +19,8 @@ BPPARAM_GSE67333 <- MulticoreParam(workers = 4)
 out_dir_GSE67333 <- file.path("results", "DEXSeqGSE67333")
 dir.create(out_dir_GSE67333, recursive = TRUE, showWarnings = FALSE)
 ```
+
+Load the course helper environment (`exam_functions.Rdata`), the transcript-level estimated count matrix for **GSE67333** (n=8 hippocampal samples: 4 `AD` and 4 `Control`, with Ensembl transcript IDs as rows and GEO sample accessions as columns), the cleaned sample metadata, and the official GRCh38.107 `transcript_id`-to-`gene_id` annotation table.
 
 ```{r}
 load(file = "/home/projects/22140/exam_data/exam_functions.Rdata")
@@ -34,6 +40,10 @@ tx2gene_df_GSE67333 <- readr::read_rds(
   dplyr::distinct(transcript_id, .keep_all = TRUE)
 ```
 
+### 2. Preprocessing, Filtering & DEXSeq Model Fitting
+
+Round estimated transcript counts to integers as required by `DEXSeq`'s negative binomial model, verify exact sample order alignment against `sample_id`, and construct `sample_data` with explicit factors for `sample`, `condition` (`Control` as reference), `sex`, and z-score standardized `age_scaled`.
+
 ```{r}
 # prepare integer count matrix and align sample metadata
 count_matrix_GSE67333 <- round(as.matrix(isoform_counts_GSE67333))
@@ -50,6 +60,8 @@ sample_data_GSE67333 <- data.frame(
   age_scaled = as.numeric(scale(metadata_GSE67333$age))
 )
 ```
+
+Align the count matrix one-to-one with the `tx2gene` annotation table and filter the feature space to improve statistical power and prevent group-specific zero-count separation: first remove lowly expressed transcripts (`< 10` counts in fewer than 4 of the 8 samples), and then retain only genes that still possess at least 2 expressed isoforms (`n >= 2`), since single-isoform genes cannot undergo differential isoform usage.
 
 ```{r}
 # align transcript-to-gene annotation 1-to-1 and filter features
@@ -75,6 +87,8 @@ count_matrix_GSE67333 <- count_matrix_GSE67333[keep_tx_GSE67333, ]
 tx2gene_GSE67333 <- tx2gene_GSE67333[keep_tx_GSE67333, ]
 ```
 
+Construct the `DEXSeqDataSet` object using the covariate-adjusted interaction formula `~ sample + exon + sex:exon + age_scaled:exon + condition:exon` (where `exon` denotes individual transcript features within each gene), maintaining the exact same statistical specification used for **GSE173955**.
+
 ```{r}
 # build DEXSeqDataSet object including sex and age confounders
 dxd_GSE67333 <- DEXSeqDataSet(
@@ -85,6 +99,8 @@ dxd_GSE67333 <- DEXSeqDataSet(
   groupID = tx2gene_GSE67333$gene_id
 )
 ```
+
+Execute the `DEXSeq` statistical pipeline: estimate library size factors (`estimateSizeFactors`), fit feature dispersions (`estimateDispersions`), and test for Differential Isoform Usage via a likelihood ratio test comparing `fullModel` (`~ sample + exon + sex:exon + age_scaled:exon + condition:exon`) against `reducedModel` (`~ sample + exon + sex:exon + age_scaled:exon`) in `testForDEU()`. Finally,estimate condition-specific isoform fold changes (`estimateExonFoldChanges`) and extract `DEXSeqResults()`.
 
 ```{r}
 # run DEXSeq pipeline
@@ -101,6 +117,10 @@ dxd_GSE67333 <- testForDEU(
 dxd_GSE67333 <- estimateExonFoldChanges(dxd_GSE67333, fitExpToVar = "condition", BPPARAM = BPPARAM_GSE67333)
 dxr_GSE67333 <- DEXSeqResults(dxd_GSE67333)
 ```
+
+### 3. Extract Isoform-Level and Gene-Level Results
+
+Extract all tested isoforms and filter significant transcripts (`padj < 0.05`). To enable gene-level comparison with `DESeq2` and preserve the likelihood ratio test statistic (`stat`) for downstream Gene Set Enrichment Analysis (`fgseaMultilevel`), collapse results to one representative row per gene by selecting the isoform with the smallest raw `pvalue` (`slice_min`) and recalculating gene-level FDR across unique genes (`p.adjust(pvalue, method = "fdr")`). Export all full and significant tables as `.csv` files alongside the serialized `dxr` `.rds` object.
 
 ```{r}
 # extract isoform-level and collapsed gene-level results
@@ -148,25 +168,41 @@ readr::write_csv(sig_genes_GSE67333, file.path(out_dir_GSE67333, "DEXSeq_sig_gen
 saveRDS(dxr_GSE67333, file.path(out_dir_GSE67333, "dxr_GSE67333.rds"))
 ```
 
+The summary reports the number of isoforms passing genome-wide multiple-testing correction (FDR\<0.05),the corresponding number of unique genes represented among those isoforms, and the total count of genes with significant differential isoform usage after collapsing to one lead isoform per gene and recalculating gene-level FDR.
+
+Display the top 10 genes ranked by gene-level significance, showing each gene's lead isoform (`isoform_id`), likelihood ratio test statistic (`stat`), estimated `log2FC`, raw `pvalue`, and gene-level `padj`.
+
 ```{r}
 # Inspect top 10 significant genes
 head(res_genes_GSE67333, 10)
 ```
 
+The top-ranked genes in **GSE67333** exhibit high likelihood ratio test statistics (`stat`) and low raw p-values, providing the gene-level ranking metric (`stat`) used for downstream functional enrichment (`fgseaMultilevel`) and cross-study comparison with **GSE173955**.
+
 ## Graphs and Analysis
+
+Plot per-feature dispersion estimates against the mean of normalized counts to verify that `DEXSeq` accurately models biological and technical variance across expression levels.
 
 ```{r}
 # 1. Dispersion estimation plot
 plotDispEsts(dxd_GSE67333, main = "DEXSeq - Dispersion Estimation (GSE67333)")
 ```
 
+The dispersion diagnostic plot confirms a well-calibrated negative binomial fit across the full expression range (`1e+01` to `1e+06` mean normalized counts): individual isoform dispersion estimates (black dots) follow a smooth, monotonically decreasing mean-dispersion trend (red curve), while empirical Bayes shrinkage pulls noisy estimates toward the fitted curve (blue dots) and retains high-dispersion outliers (circled in blue) to prevent false-positive calls.
+
+Generate an MA plot displaying log2 isoform usage fold changes against mean normalized expression across all tested transcripts, highlighting statistically significant isoforms (FDR<0.05) in red.
+
 ```{r}
 # 2. MA plot
 plotMA(dxr_GSE67333, cex = 0.8, alpha = 0.05, main = "MA Plot - Differential Isoform Usage (GSE67333)")
 ```
 
+The MA plot shows a symmetric funnel centered around log2​FC=0, where fold-change variance narrows progressively as mean normalized expression increases, and statistically significant isoforms (red) span moderate-to-high abundance transcripts rather than noisy low-count features.
+
+Visualize statistical significance (−log10​(padj) on a square-root scale) against magnitude and direction of isoform usage change (log2​FC), highlighting isoforms with increased relative usage (`padj < 0.05` and log2​FC>0, orange) and decreased relative usage (`padj < 0.05` and log2​FC<0, blue). The horizontal axis is restricted to [−10,10] via `coord_cartesian()` to exclude extreme unshrunken boundary estimates from zero-count groups.
+
 ```{r}
-# 3. Volcano plot 
+# 3. Volcano plot (sqrt y-scale so main distribution is not compressed by top outliers)
 volcano_df_GSE67333 <- res_isoforms_GSE67333 |> 
   dplyr::filter(!is.na(padj), !is.na(.data[[lfc_col_GSE67333]])) |> 
   dplyr::mutate(
@@ -189,12 +225,12 @@ volcano_plot_GSE67333 <- ggplot(
   )) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
   geom_vline(xintercept = 0, linetype = "dotted", color = "grey40") +
+  scale_y_sqrt(breaks = c(0, 1.3, 3, 6, 10, 15, 20, 25)) +
   coord_cartesian(xlim = c(-10, 10)) +
   labs(
     title = "Differential Isoform Usage - GSE67333",
-    subtitle = "X-axis zoomed to [-10, 10] to exclude unshrunken zero-count LFC boundary artifacts",
     x = paste0("Log2 Fold Change (", lfc_col_GSE67333, ")"),
-    y = "-Log10 Adjusted P-value",
+    y = "-Log10 Adjusted P-value (sqrt scale)",
     color = "State"
   ) +
   theme_minimal(base_size = 12)
@@ -202,6 +238,10 @@ volcano_plot_GSE67333 <- ggplot(
 volcano_plot_GSE67333
 ggsave(file.path(out_dir_GSE67333, "volcano_plot_GSE67333.png"), plot = volcano_plot_GSE67333, width = 8, height = 6, dpi = 300)
 ```
+
+In **GSE67333**, significant isoforms (FDR<0.05) show an asymmetric shift toward increased relative usage in `AD` (orange points reaching −log10​(padj)≈24.5) compared with decreased usage (blue points reaching −log10​(padj)≈6). Unlike standard gene-level `DESeq2` volcano plots, points also rise close to log2​FC=0 because `padj` is derived from the covariate-adjusted likelihood ratio test (`testForDEU`) whereas marginal `log2FC` is estimated separately, and because relative isoform proportions within a gene must sum to 100% (so a modest proportional drop in a dominant isoform yields larger positive log2​FC shifts in minor isoforms, amplified here by `GSE67333`'s total RNA / `RiboZero` library preparation).
+
+For every gene with at least one significant isoform (FDR<0.05), compute the fraction of its expressed isoforms that are differentially used (`n_sig / n_iso`) and plot the distribution as a histogram.
 
 ```{r}
 # 4. Per-gene fraction of significant isoforms histogram (Optional challenge #3 in exercise)
@@ -233,53 +273,4 @@ frac_plot_GSE67333
 ggsave(file.path(out_dir_GSE67333, "per_gene_isoform_fraction_GSE67333.png"), plot = frac_plot_GSE67333, width = 8, height = 5, dpi = 300)
 ```
 
-```{r}
-# 5. Relative isoform usage profile for the top significant gene
-top_gene_raw_GSE67333 <- res_genes_GSE67333$gene_id[1]
-
-norm_counts_GSE67333 <- DEXSeq::featureCounts(dxd_GSE67333, normalized = TRUE)
-gene_rows_GSE67333 <- grep(paste0("^", top_gene_raw_GSE67333, ":"), rownames(norm_counts_GSE67333), value = TRUE)
-
-iso_usage_df_GSE67333 <- as.data.frame(norm_counts_GSE67333[gene_rows_GSE67333, , drop = FALSE]) |> 
-  tibble::rownames_to_column("gene_tx") |> 
-  tidyr::separate(gene_tx, into = c("gene_id", "transcript_id"), sep = ":") |> 
-  tidyr::pivot_longer(
-    cols = -c(gene_id, transcript_id),
-    names_to = "sample_id",
-    values_to = "norm_count"
-  ) |> 
-  dplyr::left_join(metadata_GSE67333, by = "sample_id") |> 
-  dplyr::group_by(sample_id) |> 
-  dplyr::mutate(
-    gene_total = sum(norm_count),
-    isoform_prop = dplyr::if_else(gene_total > 0, norm_count / gene_total, 0)
-  ) |> 
-  dplyr::ungroup()
-
-iso_switch_plot_GSE67333 <- ggplot(
-  iso_usage_df_GSE67333,
-  aes(x = transcript_id, y = isoform_prop, fill = condition)
-) +
-  geom_boxplot(alpha = 0.75, outlier.shape = NA, position = position_dodge(width = 0.8)) +
-  geom_point(
-    aes(color = condition),
-    position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8),
-    size = 2, alpha = 0.85
-  ) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  labs(
-    title = paste("Relative Isoform Usage (GSE67333):", top_gene_raw_GSE67333),
-    x = "Transcript ID",
-    y = "Relative Isoform Proportion (% of Gene Expression)",
-    fill = "Condition",
-    color = "Condition"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1))
-
-iso_switch_plot_GSE67333
-ggsave(
-  file.path(out_dir_GSE67333, paste0("isoform_usage_", top_gene_raw_GSE67333, "_GSE67333.png")),
-  plot = iso_switch_plot_GSE67333, width = 8, height = 5, dpi = 300
-)
-```
+Among affected genes in **GSE67333**, the fraction of differentially used isoforms peaks primarily at low ratios (`0.05`–`0.15`),confirming selective isoform switching within multi-isoform loci. Smaller discrete peaks appear at `0.33` (1/3), `0.50` (1/2), and `1.00` (2/2), the latter representing two-isoform genes in which a reciprocal shift in relative usage makes both transcripts statistically significant.
