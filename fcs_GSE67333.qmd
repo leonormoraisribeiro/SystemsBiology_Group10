@@ -1,0 +1,132 @@
+---
+title: "fcs"
+format: html
+---
+
+### Functional Class Scoring
+
+When comparing two biological conditions, are there entire biological processes that show coordinated differences in gene expression?
+
+Cells under different biological conditions may express different sets of genes.
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(fgsea)
+library(msigdbr)
+```
+
+```{r}
+
+load(file='/home/projects/22140/exam_data/exam_functions.Rdata')
+
+isoform_counts_GSE67333 <- loadIsoformCountMatrix("GSE67333")
+
+gene_counts_GSE67333 <- extractGeneCountMatrixFromIsoCounts(isoform_counts_GSE67333)
+meta_data_GSE67333 <- read.csv("data/metadata/GSE67333_metadata_clean.csv")
+
+
+```
+
+### Defining our biological comparison
+
+```{r}
+group_column <- "condition"
+numerator <- "AD"
+denominator <- "Control"
+
+covariates <- covariates <- character(0)
+```
+
+### Get predefined gene sets on biological processes
+
+```{r}
+BP_df <- msigdbr(
+  species = "human",
+  collection = "C5",
+  subcollection = "GO:BP"
+)
+
+BP_list <- split(
+  BP_df$ensembl_gene,
+  BP_df$gs_name
+)
+```
+
+### Ranking the genes
+
+Creating a spectrum of genes ranging from those with the strongest statistical evidence of upregulation to those with the strongest evidence of downregulation.
+
+```{r}
+myStats <- res_GSE67333$stat
+
+names(myStats) <- rownames(res_GSE67333)
+
+names(myStats) <- sub("\\.\\d+$", "", names(myStats))
+
+myStats <- myStats[!is.na(myStats)]
+
+myStats <- sort(myStats, decreasing = TRUE)
+```
+
+### Running Functional class scoring
+
+```{r}
+set.seed(42)
+
+fg <- fgseaMultilevel(
+  pathways = BP_list,
+  stats = myStats,
+  minSize = 15,
+  maxSize = 500,
+  scoreType = "std"
+)
+```
+
+```{r}
+library(dplyr)
+
+fg_sig <- fg |>
+  arrange(padj) |>
+  filter(padj < 0.05)
+
+nrow(fg_sig)
+
+head(fg_sig, 20)
+```
+
+Values to look at:
+
+**ES: enrichment score**
+
+Describes the observed distribution of genes belonging to a biological process within the ranked list.
+
+A positive ES indicates enrichment towards the top, and a negative ES indicates enrichment towards the bottom.
+
+**NES: Normalized enrichment score**
+
+ES, but normalised
+
+**PADJ: P-value adjusted for multiple testing**
+
+How significance is ES?
+
+```{r}
+#choosing the most signicant one
+chosen_pathway <- fg_sig$pathway[1]
+
+plotEnrichment(
+  BP_list[[chosen_pathway]],
+  myStats
+) +
+  ggplot2::labs(title = chosen_pathway)
+ # ggplot2::labs(title = paste0("Enrichment: ", chosen_pathway
+```
+
+```{r}
+leading <- fg_sig$leadingEdge[[1]]
+
+first_genes <- head(leading, 3)
+
+first_genes
+```
