@@ -20,29 +20,35 @@ isoform_counts_GSE67333 <- loadIsoformCountMatrix("GSE67333")
 gene_counts_GSE67333 <- extractGeneCountMatrixFromIsoCounts(isoform_counts_GSE67333)
 ```
 
-Separating Metadata
+Preparing Metadata
 
 ```{r}
-# Extracting sample ID
-sample_metadata_GSE67333 <- data.frame(
-  Sample = colnames(gene_counts_GSE67333)
+# Loading cleaned metadata
+sample_metadata_GSE67333 <- read.csv(
+  "data/metadata/GSE67333_metadata_clean.csv"
 )
 
-# Making a new Condition column (Alzheimer or Control)
+# Matching metadata order to gene counts
+sample_metadata_GSE67333 <- sample_metadata_GSE67333[
+  match(
+    colnames(gene_counts_GSE67333),
+    sample_metadata_GSE67333$sample_id
+  ),
+]
+
+# Converting condition and sex into factors
 sample_metadata_GSE67333 <- sample_metadata_GSE67333 |>
-  mutate(Condition = case_when(
-    as.numeric(sub("GSM", "", Sample)) <= 1644999 ~ "Alzheimer",
-    as.numeric(sub("GSM", "", Sample)) > 1644999 ~ "Control"
-  ))
+  mutate(
+    condition = factor(condition, levels = c("Control", "AD")),
+    sex = factor(sex)
+  )
 
-# Converting Condition into a factor
-sample_metadata_GSE67333$Condition <- factor(
-  sample_metadata_GSE67333$Condition,
-  levels = c("Control", "Alzheimer")
-)
+# Naming rows according to sample ID
+rownames(sample_metadata_GSE67333) <- sample_metadata_GSE67333$sample_id
 
-# Naming the rows according to sample ID
-rownames(sample_metadata_GSE67333) <- sample_metadata_GSE67333$Sample
+# Centering and scaling age for confounder adjustment
+sample_metadata_GSE67333 <- sample_metadata_GSE67333 |>
+  mutate(age_scaled = as.numeric(scale(age)))
 ```
 
 Running DESeq
@@ -52,7 +58,7 @@ Running DESeq
 dds_GSE67333 <- DESeqDataSetFromMatrix(
   countData = gene_counts_GSE67333,
   colData = sample_metadata_GSE67333,
-  design = ~ Condition
+  design = ~ condition
 )
 
 # Running differential expression analysis
@@ -61,9 +67,10 @@ dds_GSE67333 <- DESeq(dds_GSE67333)
 # Extracting Alzheimer vs Control results
 res_GSE67333 <- results(
   dds_GSE67333,
-  contrast = c("Condition", "Alzheimer", "Control"),
+  contrast = c("condition", "AD", "Control"),
   alpha = 0.05
 )
+
 
 # Counting significant genes
 n_sig_GSE67333 <- sum(
@@ -174,6 +181,149 @@ ggplot(
       "Upregulated" = "forestgreen",
       "Downregulated" = "orange",
       "Not highlighted" = "grey"
+    )
+  ) +
+  labs(
+    title = "GSE67333 - Alzheimer vs Control",
+    x = "log2 Fold Change",
+    y = "-log10 Adjusted P-value"
+  ) +
+  coord_cartesian(xlim = c(-6, 6), ylim = c(0, 7)) +
+  theme_minimal()
+```
+
+### Adjusting for Confounders
+
+### Age and Sex
+
+Running DESeq
+
+```{r}
+# Creating DESeq dataset adjusted for age and sex
+dds_GSE67333_age_sex <- DESeqDataSetFromMatrix(
+  countData = gene_counts_GSE67333,
+  colData = sample_metadata_GSE67333,
+  design = ~ age_scaled + sex + condition
+)
+
+# Running differential expression analysis
+dds_GSE67333_age_sex <- DESeq(dds_GSE67333_age_sex)
+
+# Extracting Alzheimer vs Control results
+res_GSE67333_age_sex <- results(
+  dds_GSE67333_age_sex,
+  contrast = c("condition", "AD", "Control"),
+  alpha = 0.05
+)
+
+# Counting significant genes
+n_sig_GSE67333_age_sex <- sum(
+  res_GSE67333_age_sex$padj < 0.05,
+  na.rm = TRUE
+)
+
+# Counting upregulated genes
+n_up_GSE67333_age_sex <- sum(
+  res_GSE67333_age_sex$padj < 0.05 &
+  res_GSE67333_age_sex$log2FoldChange > 0,
+  na.rm = TRUE
+)
+
+# Counting downregulated genes
+n_down_GSE67333_age_sex <- sum(
+  res_GSE67333_age_sex$padj < 0.05 &
+  res_GSE67333_age_sex$log2FoldChange < 0,
+  na.rm = TRUE
+)
+
+# Displaying summary of results
+cat(
+  summary(res_GSE67333_age_sex, alpha = 0.05),
+  "\nNumber of Significant Genes:", n_sig_GSE67333_age_sex,
+  "\nNumber of Upregulated Genes:", n_up_GSE67333_age_sex,
+  "\nNumber of Downregulated Genes:", n_down_GSE67333_age_sex,
+  "\n"
+)
+```
+
+Saving Results
+
+```{r}
+# Creating folder for results
+out_dir_GSE67333_age_sex <- file.path("results", "DESeq2GSE67333_age_sex")
+
+dir.create(
+  out_dir_GSE67333_age_sex,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# Converting results into a data frame
+res_df_GSE67333_age_sex <- as.data.frame(res_GSE67333_age_sex)
+
+res_df_GSE67333_age_sex$gene_id <- rownames(res_df_GSE67333_age_sex)
+
+# Saving all results
+write.csv(
+  res_df_GSE67333_age_sex,
+  file.path(out_dir_GSE67333_age_sex, "DESeq2_age_sex_all_genes.csv"),
+  row.names = FALSE
+)
+
+# Filtering for and saving significant genes
+sig_genes_GSE67333_age_sex <- res_df_GSE67333_age_sex |>
+  filter(!is.na(padj), padj < 0.05)
+
+write.csv(
+  sig_genes_GSE67333_age_sex,
+  file.path(out_dir_GSE67333_age_sex, "DESeq2_age_sex_significant_genes.csv"),
+  row.names = FALSE
+)
+```
+
+Dispersion Plot
+
+```{r}
+# Plotting dispersion estimates
+plotDispEsts(dds_GSE67333_age_sex)
+```
+
+MA Plot
+
+```{r}
+# Plotting mean expression against log2 fold change
+plotMA(
+  res_GSE67333_age_sex,
+  alpha = 0.05,
+  main = "GSE67333 - Alzheimer vs Control"
+)
+```
+
+Volcano Plot
+
+```{r}
+# Classifying genes by significance and fold change
+volcano_GSE67333_age_sex <- as.data.frame(res_GSE67333_age_sex) |>
+  mutate(
+    Regulation = case_when(
+      padj < 0.05 & log2FoldChange > 1 ~ "Upregulated",
+      padj < 0.05 & log2FoldChange < -1 ~ "Downregulated",
+      TRUE ~ "Not significant"
+    )
+  )
+
+# Volcano Plot
+ggplot(
+  volcano_GSE67333_age_sex,
+  aes(x = log2FoldChange, y = -log10(padj),
+      color = Regulation)
+) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(
+    values = c(
+      "Upregulated" = "forestgreen",
+      "Downregulated" = "orange",
+      "Not significant" = "grey"
     )
   ) +
   labs(

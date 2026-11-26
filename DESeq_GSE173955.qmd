@@ -20,10 +20,9 @@ isoform_counts_GSE173955 <- loadIsoformCountMatrix("GSE173955")
 gene_counts_GSE173955 <- extractGeneCountMatrixFromIsoCounts(isoform_counts_GSE173955)
 ```
 
-### Separating Metadata
+### Preparing Metadata
 
 ```{r}
-
 # Loading cleaned metadata
 sample_metadata_GSE173955 <- read.csv(
   "data/metadata/GSE173955_metadata_clean.csv"
